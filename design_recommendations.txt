@@ -1,0 +1,78 @@
+
+================================================================================
+              SHELL ECO-MARATHON DESIGN RECOMMENDATIONS
+================================================================================
+
+VEHICLE PARAMETERS USED:
+  Mass: 160.0 kg
+  Rolling Resistance (Crr): 0.01
+  Motor Efficiency: 85%
+
+OPTIMIZATION RESULTS:
+  Track Length: 1319.6 m
+  Lap Time: 190.1 s (3.17 min)
+  Average Speed: 25.0 km/h
+
+ENERGY CONSUMPTION:
+  Total Energy per Lap: 7.9010 Wh
+  Energy per km: 5.99 Wh/km
+  Average Power Draw: 149.6 W
+
+--------------------------------------------------------------------------------
+                          POWERTRAIN RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+MOTOR SIZING:
+  - Peak Power Required: 2371 W
+  - Continuous Power: ~224 W (1.5x average for margin)
+  - Recommended Motor: >2846 W rated
+  
+  - Peak Torque at Wheel: 76.32 Nm
+  - Peak Wheel Force: 271 N
+
+MOTOR CONTROLLER:
+  - Peak Current (at 60V): 39.5 A
+  - Recommended Controller: >51 A continuous
+
+BATTERY PACK:
+  - Voltage: 60V nominal
+  - Minimum Capacity: 131.7 mAh per lap
+  - For 25km race (~19 laps): 150.1 Wh minimum
+  
+--------------------------------------------------------------------------------
+                          CHASSIS RECOMMENDATIONS  
+--------------------------------------------------------------------------------
+
+ACCELERATION REQUIREMENTS:
+  - Max Longitudinal Accel: 1.59 m/s² (0.162 g)
+  - Max Braking Decel: 0.84 m/s² (0.085 g)
+  - Max Lateral Accel: 2.51 m/s² (0.256 g)
+
+TIRE LOADING:
+  - Peak Longitudinal Force: 271 N
+  - Design tires for: 352 N with safety margin
+
+BRAKING SYSTEM:
+  - Peak braking force: 134 N
+  - Regenerative: NOT AVAILABLE (mechanical brakes only)
+
+WEIGHT DISTRIBUTION:
+  - Front axle track: 1000 mm
+  - Rear axle track: 800 mm
+  - Recommended: 45/55 front/rear for traction
+
+--------------------------------------------------------------------------------
+                          DRIVING STRATEGY
+--------------------------------------------------------------------------------
+
+The optimized velocity profile shows:
+  - Pulse-and-glide opportunities in flat sections
+  - Maximum cornering speeds dictated by tire grip
+  - Energy recovery impossible (no regen) - coast to stops early
+
+STOP STRATEGY:
+  - Begin coasting ~50m before stop locations
+  - Use gravity assist when possible (downhill coast)
+  - Maintain momentum through corner sequences
+
+================================================================================
