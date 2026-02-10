@@ -24,15 +24,15 @@ from dataclasses import asdict
 from typing import List, Optional
 
 # Local imports
-from vehicle_model import VehicleConfig, VehicleDynamics
-from track_analysis import Track
-from trajectory_optimizer import (
+from src.vehicle_model import VehicleConfig, VehicleDynamics
+from src.track_analysis import Track
+from src.trajectory_optimizer import (
     TrajectoryOptimizer, 
     OptimizationConfig, 
     OptimizationResult,
     optimize_trajectory
 )
-from visualize import (
+from src.visualize import (
     plot_all, 
     generate_summary_figure,
     plot_velocity_profile,
@@ -56,7 +56,7 @@ Examples:
     
     # Track data
     parser.add_argument('--track', type=str, 
-                        default='/home/david/UC/sem_2025_eu.csv',
+                        default='data/tracks/sem_2025_eu.csv',
                         help='Path to track CSV file')
     
     # Vehicle parameters (can override defaults)
@@ -76,7 +76,7 @@ Examples:
                         help='Auto-detect worst-case stop locations')
     
     # Output options
-    parser.add_argument('--output', type=str, default='/home/david/UC',
+    parser.add_argument('--output', type=str, default='results',
                         help='Output directory for results')
     parser.add_argument('--no-plots', action='store_true',
                         help='Skip generating plots')
@@ -278,7 +278,6 @@ BATTERY PACK:
   - Voltage: 60V nominal
   - Minimum Capacity: {result.total_energy/3600/60*1000:.1f} mAh per lap
   - For 25km race (~19 laps): {result.total_energy/3600*19:.1f} Wh minimum
-  fi
 ================================================================================
 """
     

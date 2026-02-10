@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Callable
 import warnings
 
-from vehicle_model import VehicleConfig, VehicleDynamics
-from track_analysis import Track
+from .vehicle_model import VehicleConfig, VehicleDynamics
+from .track_analysis import Track
 
 
 @dataclass
@@ -509,7 +509,9 @@ def optimize_trajectory(track_path: str,
 
 if __name__ == "__main__":
     # Test optimization
-    result = optimize_trajectory("/home/david/UC/sem_2025_eu.csv")
+    from pathlib import Path as _Path
+    _project_root = _Path(__file__).resolve().parent.parent
+    result = optimize_trajectory(str(_project_root / "data" / "tracks" / "sem_2025_eu.csv"))
     
     print(f"\nResults Summary:")
     print(f"  Energy: {result.total_energy/3600:.3f} Wh")

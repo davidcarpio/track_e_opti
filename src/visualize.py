@@ -15,8 +15,8 @@ from matplotlib.colors import Normalize
 from pathlib import Path
 from typing import Optional
 
-from trajectory_optimizer import OptimizationResult
-from track_analysis import Track
+from .trajectory_optimizer import OptimizationResult
+from .track_analysis import Track
 
 
 def plot_velocity_profile(result: OptimizationResult, 
@@ -393,15 +393,20 @@ def generate_summary_figure(track: Track, result: OptimizationResult,
 if __name__ == "__main__":
     from track_analysis import Track
     from trajectory_optimizer import optimize_trajectory
+    from pathlib import Path as _Path
+    
+    _project_root = _Path(__file__).resolve().parent.parent
+    _track_csv = str(_project_root / "data" / "tracks" / "sem_2025_eu.csv")
+    _output_dir = str(_project_root / "results")
     
     # Run optimization
-    track = Track("/home/david/UC/sem_2025_eu.csv")
-    result = optimize_trajectory("/home/david/UC/sem_2025_eu.csv")
+    track = Track(_track_csv)
+    result = optimize_trajectory(_track_csv)
     
     # Generate all plots
-    plot_all(track, result, output_dir="/home/david/UC")
+    plot_all(track, result, output_dir=_output_dir)
     
     # Generate summary
-    generate_summary_figure(track, result, save_path="/home/david/UC/summary.png")
+    generate_summary_figure(track, result, save_path=str(_project_root / "results" / "summary.png"))
     
     plt.show()

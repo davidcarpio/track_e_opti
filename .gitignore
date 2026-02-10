@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+env/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Results (generated output, not tracked)
+results/figures/
+results/*.csv
+results/*.json
+results/*.txt
+results/*.png
+
+# Keep stashed previous results
+!results/_previous/

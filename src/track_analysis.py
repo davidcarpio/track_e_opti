@@ -342,7 +342,8 @@ def analyze_track(csv_path: str) -> Track:
 
 if __name__ == "__main__":
     # Test with actual track data
-    track = analyze_track("/home/david/UC/sem_2025_eu.csv")
+    _project_root = Path(__file__).resolve().parent.parent
+    track = analyze_track(str(_project_root / "data" / "tracks" / "sem_2025_eu.csv"))
     
     # Find stop locations
     stops = track.get_worst_case_stop_locations()
@@ -379,6 +380,6 @@ if __name__ == "__main__":
     axes[2].grid(True)
     
     plt.tight_layout()
-    plt.savefig('/home/david/UC/track_analysis.png', dpi=150)
+    plt.savefig(str(_project_root / 'results' / 'track_analysis.png'), dpi=150)
     print("Saved track analysis to track_analysis.png")
     plt.show()
