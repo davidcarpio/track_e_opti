@@ -79,47 +79,46 @@ class Track:
     
     def _compute_curvature(self, window: int = 5):
         """
-        Compute curvature at each point using local circle fitting.
+        Compute curvature at each point using local circle fitting (vectorized).
         
         Curvature = 1/R where R is the radius of the osculating circle.
-        Uses three-point circle fitting with smoothing window.
+        Uses three-point Menger curvature with smoothing window.
         """
         n = len(self.points)
+        if n < 3:
+            return
         
-        for i in range(n):
-            # Get points for curvature calculation
-            i_prev = max(0, i - window)
-            i_next = min(n - 1, i + window)
-            
-            if i_next - i_prev < 2:
-                self.points[i].curvature = 0.0
-                continue
-            
-            # Use three points for circle fitting
-            p1 = self.points[i_prev]
-            p2 = self.points[i]
-            p3 = self.points[i_next]
-            
-            # Menger curvature formula: 4*Area / (|P1-P2| * |P2-P3| * |P3-P1|)
-            x1, y1 = p1.x, p1.y
-            x2, y2 = p2.x, p2.y
-            x3, y3 = p3.x, p3.y
-            
-            # Signed area of triangle * 2
-            area2 = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
-            
-            # Edge lengths
-            d12 = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-            d23 = np.sqrt((x3 - x2)**2 + (y3 - y2)**2)
-            d31 = np.sqrt((x1 - x3)**2 + (y1 - y3)**2)
-            
-            denom = d12 * d23 * d31
-            if denom > 1e-10:
-                curvature = 2 * area2 / denom
-            else:
-                curvature = 0.0
-            
-            self.points[i].curvature = curvature
+        # Extract coordinates as arrays
+        x = np.array([p.x for p in self.points])
+        y = np.array([p.y for p in self.points])
+        
+        # Build index arrays for prev/next (clamped at boundaries)
+        indices = np.arange(n)
+        i_prev = np.clip(indices - window, 0, n - 1)
+        i_next = np.clip(indices + window, 0, n - 1)
+        
+        # Gather coordinates for P1 (prev), P2 (current), P3 (next)
+        x1, y1 = x[i_prev], y[i_prev]
+        x2, y2 = x, y
+        x3, y3 = x[i_next], y[i_next]
+        
+        # Signed area of triangle * 2
+        area2 = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+        
+        # Edge lengths
+        d12 = np.hypot(x2 - x1, y2 - y1)
+        d23 = np.hypot(x3 - x2, y3 - y2)
+        d31 = np.hypot(x1 - x3, y1 - y3)
+        
+        # Menger curvature: 2 * area / (d12 * d23 * d31)
+        denom = d12 * d23 * d31
+        curvatures = np.where(denom > 1e-10, 2.0 * area2 / denom, 0.0)
+        
+        # Zero out points where window is too small (i_next - i_prev < 2)
+        curvatures[i_next - i_prev < 2] = 0.0
+        
+        for i, p in enumerate(self.points):
+            p.curvature = curvatures[i]
         
         # Smooth curvature
         self._smooth_curvature(window=3)
@@ -137,23 +136,22 @@ class Track:
     
     def _compute_grade(self):
         """Compute road grade (slope) at each point."""
-        n = len(self.points)
+        if len(self.points) < 2:
+            return
+
+        distances = np.array([p.distance for p in self.points])
+        elevations = np.array([p.elevation for p in self.points])
         
-        for i in range(n):
-            if i == 0:
-                de = self.points[1].elevation - self.points[0].elevation
-                ds = self.points[1].distance - self.points[0].distance
-            elif i == n - 1:
-                de = self.points[i].elevation - self.points[i-1].elevation
-                ds = self.points[i].distance - self.points[i-1].distance
-            else:
-                de = self.points[i+1].elevation - self.points[i-1].elevation
-                ds = self.points[i+1].distance - self.points[i-1].distance
+        # Compute gradient (dy/dx)
+        # Handle potential division by zero (though unlikely with proper formatting)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            grades = np.gradient(elevations, distances)
             
-            if ds > 0:
-                self.points[i].grade = de / ds
-            else:
-                self.points[i].grade = 0.0
+        # Replace Infs and NaNs with 0.0
+        grades = np.nan_to_num(grades, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        for i, p in enumerate(self.points):
+            p.grade = grades[i]
     
     def _identify_segments(self, curvature_threshold: float = 0.01):
         """
@@ -274,26 +272,21 @@ class Track:
         tightest = min(corners, key=lambda s: s.min_radius)
         return (tightest.start_distance, tightest.end_distance)
     
-    def get_worst_case_stop_locations(self) -> List[float]:
+    def get_worst_case_stop_location(self) -> float:
         """
-        Get the two worst-case mandatory stop locations.
-        
-        Returns:
-            List of two distances for stops
+        Get the single worst-case mandatory stop location (mid-lap).
+
+        Returns the point where a forced stop costs the most energy —
+        the end of the longest straight, where kinetic energy is highest.
         """
-        # Stop 1: End of main straight (max KE)
         straight_start, straight_end = self.find_main_straight()
-        stop1 = straight_end
-        
-        # Stop 2: Before tight corner sequence
-        corner_start, corner_end = self.find_tightest_corner_sequence()
-        stop2 = corner_start
-        
-        print(f"Worst-case stop locations:")
-        print(f"  Stop 1 (end of straight): {stop1:.1f} m")
-        print(f"  Stop 2 (before tight corners): {stop2:.1f} m")
-        
-        return [stop1, stop2]
+        print(f"Worst-case mid-lap stop: {straight_end:.1f} m "
+              f"(end of main straight)")
+        return straight_end
+
+    def get_worst_case_stop_locations(self) -> List[float]:
+        """Backward-compat wrapper — returns [worst_case_stop]."""
+        return [self.get_worst_case_stop_location()]
     
     def get_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -345,8 +338,9 @@ if __name__ == "__main__":
     _project_root = Path(__file__).resolve().parent.parent
     track = analyze_track(str(_project_root / "data" / "tracks" / "sem_2025_eu.csv"))
     
-    # Find stop locations
-    stops = track.get_worst_case_stop_locations()
+    # Find stop location
+    worst_stop = track.get_worst_case_stop_location()
+    stop_distances = [0.0, worst_stop, track.total_distance]
     
     # Plot track overview
     import matplotlib.pyplot as plt
@@ -359,27 +353,27 @@ if __name__ == "__main__":
     axes[0].plot(distances, elevations, 'b-')
     axes[0].set_ylabel('Elevation (m)')
     axes[0].set_title('Track Profile')
-    axes[0].axvline(stops[0], color='r', linestyle='--', label='Stop 1')
-    axes[0].axvline(stops[1], color='g', linestyle='--', label='Stop 2')
-    axes[0].legend()
+    for s in stop_distances:
+        axes[0].axvline(s, color='r', linestyle='--', alpha=0.5)
     axes[0].grid(True)
     
     # Curvature profile
     axes[1].plot(distances, curvatures, 'r-')
     axes[1].set_ylabel('Curvature (1/m)')
-    axes[1].axvline(stops[0], color='r', linestyle='--')
-    axes[1].axvline(stops[1], color='g', linestyle='--')
+    for s in stop_distances:
+        axes[1].axvline(s, color='r', linestyle='--', alpha=0.5)
     axes[1].grid(True)
     
     # Grade profile
     axes[2].plot(distances, grades * 100, 'g-')
     axes[2].set_xlabel('Distance (m)')
     axes[2].set_ylabel('Grade (%)')
-    axes[2].axvline(stops[0], color='r', linestyle='--')
-    axes[2].axvline(stops[1], color='g', linestyle='--')
+    for s in stop_distances:
+        axes[2].axvline(s, color='r', linestyle='--', alpha=0.5)
     axes[2].grid(True)
     
     plt.tight_layout()
     plt.savefig(str(_project_root / 'results' / 'track_analysis.png'), dpi=150)
     print("Saved track analysis to track_analysis.png")
     plt.show()
+

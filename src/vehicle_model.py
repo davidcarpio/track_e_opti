@@ -39,9 +39,12 @@ class VehicleConfig:
     weight_dist_front: float = 0.45  # Front weight distribution
     
     # Powertrain
-    motor_efficiency: float = 0.85  # Motor+controller efficiency
+    motor_efficiency: float = 0.85  # Motor+controller peak efficiency
     battery_voltage: float = 60.0  # V
-    max_motor_power: float = 1000.0  # W (estimated, adjustable)
+    max_motor_power: float = 1000.0  # W (rated continuous power)
+    
+    # Braking
+    max_braking_decel: float = 3.0  # m/s² (comfort braking, not emergency)
     
     # Limits
     max_velocity: float = 40.0 / 3.6  # 40 km/h in m/s
@@ -169,6 +172,57 @@ class VehicleDynamics:
         normal = self.normal_force(velocity, grade)
         return c.mu_tire * normal
     
+    def motor_limited_force(self, velocity: float) -> float:
+        """
+        Maximum force the motor can deliver at a given speed.
+        
+        F = P_motor / v, capped at stall force for low speeds.
+        
+        Args:
+            velocity: Vehicle speed in m/s
+            
+        Returns:
+            Max motor force in N
+        """
+        c = self.config
+        v_min = 0.5  # Below this, use stall torque estimate
+        v_eff = max(velocity, v_min)
+        return c.max_motor_power / v_eff
+    
+    def motor_efficiency_at_power(self, power_mech: float) -> float:
+        """
+        Motor+controller efficiency as a function of mechanical power.
+        
+        Realistic curve: low at very low power (iron/copper losses dominate),
+        peaks at ~60-80% rated, drops slightly at overload.
+        
+        Args:
+            power_mech: Mechanical power in W (positive)
+            
+        Returns:
+            Efficiency (0..1)
+        """
+        P = abs(power_mech)
+        P_rated = self.config.max_motor_power
+        
+        if P < 5:
+            return 0.50  # Standstill/creep losses
+        
+        load = P / P_rated  # Fraction of rated power
+        
+        if load < 0.15:
+            # Very light load: 50-70%
+            return 0.50 + load * (0.70 - 0.50) / 0.15
+        elif load < 0.5:
+            # Light to medium: 70-87%
+            return 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
+        elif load <= 1.0:
+            # Medium to full: 87-90% (peak)
+            return 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
+        else:
+            # Overload: drops from 90% (should be rare now with power limit)
+            return max(0.65, 0.90 - (load - 1.0) * 0.25)
+    
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
         Calculate maximum cornering velocity for a given radius.
@@ -230,6 +284,8 @@ class VehicleDynamics:
         """
         Calculate electrical power from battery (no regen).
         
+        Uses power-dependent motor efficiency curve.
+        
         Args:
             velocity: Vehicle speed in m/s
             acceleration: Longitudinal acceleration in m/s^2
@@ -238,12 +294,12 @@ class VehicleDynamics:
         Returns:
             Electrical power in W (always >= 0, no regen)
         """
-        c = self.config
         p_mech = self.power_required(velocity, acceleration, grade)
         
         if p_mech > 0:
-            # Driving: divide by efficiency
-            return p_mech / c.motor_efficiency
+            # Driving: divide by power-dependent efficiency
+            eta = self.motor_efficiency_at_power(p_mech)
+            return p_mech / eta
         else:
             # Braking: no regeneration, return 0
             return 0.0

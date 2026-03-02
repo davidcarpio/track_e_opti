@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "/home/devil/TrackOpti/inspect_grade.py", line 6, in <module>
+    from src.track_analysis import Track
+  File "/home/devil/TrackOpti/src/__init__.py", line 10, in <module>
+    from .trajectory_optimizer import (
+    ...<4 lines>...
+    )
+  File "/home/devil/TrackOpti/src/trajectory_optimizer.py", line 15, in <module>
+    from scipy.interpolate import interp1d
+  File "/home/devil/.local/lib/python3.14/site-packages/scipy/interpolate/__init__.py", line 203, in <module>
+    from ._cubic import *
+  File "/home/devil/.local/lib/python3.14/site-packages/scipy/interpolate/_cubic.py", line 616, in <module>
+    @xp_capabilities(
+     ~~~~~~~~~~~~~~~^
+        cpu_only=True, jax_jit=False,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        ]
+        ^
+    )
+    ^
+  File "/home/devil/.local/lib/python3.14/site-packages/scipy/_lib/_array_api.py", line 845, in decorator
+    doc = FunctionDoc(f)
+  File "/home/devil/.local/lib/python3.14/site-packages/scipy/_lib/_docscrape.py", line 586, in __init__
+    doc = inspect.getdoc(func) or ""
+          ~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib64/python3.14/inspect.py", line 787, in getdoc
+    return cleandoc(doc)
+  File "/usr/lib64/python3.14/inspect.py", line 808, in cleandoc
+    lines[i] = lines[i][margin:]
+    ~~~~~^^^
+KeyboardInterrupt
