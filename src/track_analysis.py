@@ -58,24 +58,94 @@ class Track:
         self._compute_grade()
         self._identify_segments()
     
+    # ------------------------------------------------------------------
+    # CSV format detection & helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_format(columns: list) -> str:
+        """Classify CSV format from its column names.
+
+        Returns one of: 'eu_2025', 'apme_2025', 'us_2022', 'us_2023'.
+        Raises ValueError if the format is unrecognised.
+        """
+        col_set = set(c.lower() for c in columns)
+        if 'utmx' in col_set:
+            return 'eu_2025'
+        if 'altitude (m)' in col_set and 'distance (km)' in col_set:
+            return 'apme_2025'
+        if 'metres above sea level' in col_set:
+            return 'us_2023'
+        if 'latitude' in col_set and 'longitude' in col_set:
+            return 'us_2022'
+        raise ValueError(
+            f"Unrecognised track CSV format. Columns: {columns}")
+
+    @staticmethod
+    def _latlon_to_xy(lat: np.ndarray, lon: np.ndarray):
+        """Convert lat/lon arrays to local x/y (metres) via equirectangular projection."""
+        ref_lat_rad = np.radians(lat.mean())
+        x = (lon - lon.iloc[0]) * np.cos(ref_lat_rad) * 111_320.0
+        y = (lat - lat.iloc[0]) * 111_320.0
+        return x.values, y.values
+
+    @staticmethod
+    def _cumulative_distance(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Cumulative Euclidean distance along the (x, y) path."""
+        dx = np.diff(x)
+        dy = np.diff(y)
+        seg = np.hypot(dx, dy)
+        return np.concatenate(([0.0], np.cumsum(seg)))
+
+    # ------------------------------------------------------------------
+
     def _load_data(self):
-        """Load track data from CSV."""
-        df = pd.read_csv(self.csv_path)
-        
-        # Handle column names with BOM or spaces
+        """Load track data from CSV (auto-detects format)."""
+        # Try tab-separated first; fall back to comma
+        df = pd.read_csv(self.csv_path, sep='\t')
+        if len(df.columns) <= 2:
+            df = pd.read_csv(self.csv_path, sep=',')
+
+        # Strip BOM / whitespace from headers
         df.columns = df.columns.str.strip().str.replace('\ufeff', '')
-        
-        for _, row in df.iterrows():
-            point = TrackPoint(
-                distance=row['Distance from Lap Line (m)'],
-                elevation=row['Elevation (m)'],
-                x=row['UTMX'],
-                y=row['UTMY']
-            )
-            self.points.append(point)
-        
+
+        fmt = self._detect_format(list(df.columns))
+
+        if fmt == 'eu_2025':
+            distances = df['Distance from Lap Line (m)'].values
+            elevations = df['Elevation (m)'].values
+            xs = df['UTMX'].values
+            ys = df['UTMY'].values
+
+        elif fmt == 'apme_2025':
+            distances = df['distance (km)'].values * 1000.0   # km → m
+            elevations = df['altitude (m)'].values
+            xs, ys = self._latlon_to_xy(df['latitude'], df['longitude'])
+
+        elif fmt == 'us_2023':
+            elevations = df['Metres above sea level'].values
+            xs, ys = self._latlon_to_xy(df['Latitude'], df['Longitude'])
+            distances = self._cumulative_distance(xs, ys)
+
+        elif fmt == 'us_2022':
+            elevations = np.zeros(len(df))          # no elevation data
+            xs, ys = self._latlon_to_xy(df['Latitude'], df['Longitude'])
+            distances = self._cumulative_distance(xs, ys)
+
+        else:
+            raise ValueError(f"Unsupported format: {fmt}")
+
+        for i in range(len(distances)):
+            self.points.append(TrackPoint(
+                distance=distances[i],
+                elevation=elevations[i],
+                x=xs[i],
+                y=ys[i],
+            ))
+
         self.total_distance = self.points[-1].distance
-        print(f"Loaded {len(self.points)} track points, total distance: {self.total_distance:.1f} m")
+        print(f"[{fmt}] Loaded {len(self.points)} track points, "
+              f"total distance: {self.total_distance:.1f} m")
     
     def _compute_curvature(self, window: int = 5):
         """
