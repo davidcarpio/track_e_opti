@@ -28,7 +28,7 @@ from src.vehicle_model import VehicleDynamics, VehicleConfig
 from src.trajectory_optimizer import TrajectoryOptimizer, OptimizationConfig
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────
+# Helpers   
 
 def _make_logger(log_path: str):
     """Return a log() function that writes to *log_path*."""
@@ -43,7 +43,7 @@ def _make_logger(log_path: str):
     return log
 
 
-# ── Core convergence study ───────────────────────────────────────────────
+#  Core convergence study 
 
 def run_convergence_study(
     track: Track,
@@ -86,7 +86,7 @@ def run_convergence_study(
         max_lap_time = 35 * 60 / 11
         min_avg_velocity = track.total_distance / max_lap_time
 
-    log("═══ CONVERGENCE ANALYSIS ═══")
+    log(" CONVERGENCE ANALYSIS ")
     log(f"Track length : {track.total_distance:.1f} m")
     log(f"Motor power  : {vehicle.config.max_motor_power} W")
     log(f"Braking limit: {vehicle.config.max_braking_decel} m/s²")
@@ -143,7 +143,7 @@ def run_convergence_study(
     return metrics, results_map
 
 
-# ── Plotting ─────────────────────────────────────────────────────────────
+#  Plotting 
 
 def plot_convergence(metrics: dict, out_dir: str, log=print) -> str:
     """Plot 3×2 convergence graphs.  Returns saved path."""
@@ -234,7 +234,7 @@ def plot_lap_profile(results_map: dict, stop_distances: list[float],
     return path
 
 
-# ── Efficiency curve plot (disabled — model property, not convergence) ──
+#  Efficiency curve plot (disabled: model property, not convergence) 
 # def plot_efficiency_curve(vehicle, out_dir, log=print):
 #     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
 #     powers = np.linspace(1, 2000, 500)
@@ -251,7 +251,7 @@ def plot_lap_profile(results_map: dict, stop_distances: list[float],
 #     log(f"Saved: {path}")
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────
+#  CLI 
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
