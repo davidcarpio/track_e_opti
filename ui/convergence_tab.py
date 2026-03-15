@@ -17,9 +17,9 @@ from PyQt6.QtCore import Qt
 
 import numpy as np
 
-from ui.theme import ACCENT, TEXT_DIM, SUCCESS, WARNING, ERROR, apply_mpl_theme
-from ui.workers import ConvergenceWorker
-from ui.plot_widget import PlotWidget
+from .theme import ACCENT, TEXT_DIM, SUCCESS, WARNING, ERROR, apply_mpl_theme
+from .workers import ConvergenceWorker
+from .plot_widget import PlotWidget
 
 _CACHE_DIR  = Path(__file__).resolve().parent.parent / "results"
 _CACHE_FILE = _CACHE_DIR / ".convergence_cache.json"
@@ -32,8 +32,8 @@ class ConvergenceTab(QWidget):
         super().__init__(parent)
         self.state = app_state
         self._worker: ConvergenceWorker | None = None
-        self._last_metrics = None
-        self._last_results_map = None
+        self._last_metrics: dict | None = None
+        self._last_results_map: dict | None = None
         apply_mpl_theme()
         self._build_ui()
         self._load_cache()
@@ -274,7 +274,10 @@ class ConvergenceTab(QWidget):
 
     def refresh_plots(self):
         """Re-render plots with current theme."""
-        if self._last_metrics:
-            self._draw_convergence(self._last_metrics)
-        if self._last_results_map:
-            self._draw_lap_profile(self._last_results_map)
+        metrics = self._last_metrics
+        if metrics is not None:
+            self._draw_convergence(metrics)
+            
+        results_map = self._last_results_map
+        if results_map is not None:
+            self._draw_lap_profile(results_map)
