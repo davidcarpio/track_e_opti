@@ -1,0 +1,10 @@
+ CONVERGENCE ANALYSIS 
+Track length : 1319.6 m
+Motor power  : 1000.0 W
+Braking limit: 7.06 m/s²
+Target speed : 24.9 km/h  | Max lap time: 190.9 s
+Method       : greedy
+Stops        : [0.0, 416.0, 1319.627]
+
+     N       ds    accel      power     force     energy     time     avg   v_max
+---------------------------------------------------------------------------------
