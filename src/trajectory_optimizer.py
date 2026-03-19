@@ -1,18 +1,26 @@
 """
 Trajectory Optimizer for Shell Eco-marathon  —  Facade Module
 
-This module re-exports the public API from the split optimizer modules
-so that **all existing consumers continue to work unchanged**:
+Re-exports the public API so that existing consumers work unchanged::
 
     from src.trajectory_optimizer import (
         TrajectoryOptimizer, OptimizationConfig, OptimizationResult,
         optimize_trajectory,
     )
 
-Internally the work is done by:
-    - optimizer_base.py  — shared infrastructure
-    - optimizer_nlp.py   — CasADi / IPOPT  (method = 'direct')
-    - optimizer_dp.py    — Dynamic Programming (method = 'greedy')
+Backends
+--------
+- **NLP** (``optimizer_nlp.NLPOptimizer``):
+  CasADi / IPOPT direct-collocation solver.  Builds a smooth NLP with
+  automatic derivatives.  Best quality solutions but slower.
+
+- **DP** (``optimizer_dp.DPOptimizer``):
+  Backward-induction dynamic programming over a (distance, velocity) grid.
+  Globally optimal within grid resolution, fast, no external dependencies.
+
+Both inherit from ``optimizer_base.BaseOptimizer`` which provides shared
+infrastructure (discretisation, feasibility passes, energy/time computation,
+result assembly).
 """
 
 from __future__ import annotations
@@ -29,7 +37,7 @@ from .optimizer_base import (          # noqa: F401  (re-export)
 from .vehicle_model import VehicleConfig, VehicleDynamics
 from .track_analysis import Track
 
-# Conditional import — NLP needs CasADi
+# Conditional import — CasADi may not be installed
 try:
     from .optimizer_nlp import NLPOptimizer   # noqa: F401
     _HAS_NLP = True
@@ -38,18 +46,31 @@ except ImportError:
 
 from .optimizer_dp import DPOptimizer        # noqa: F401
 
+# Method name → backend class
+_METHOD_MAP = {
+    "nlp":    "NLPOptimizer",
+    "dp":     "DPOptimizer",
+    # Legacy aliases
+    "direct": "NLPOptimizer",
+    "greedy": "DPOptimizer",
+}
 
-# ═══════════════════════════════════════════════════════════════════════
-# Backward-compatible façade
-# ═══════════════════════════════════════════════════════════════════════
 
 class TrajectoryOptimizer:
     """
-    Drop-in replacement for the old monolithic optimizer.
+    Backward-compatible façade for trajectory optimization.
 
-    Delegates to NLPOptimizer (method='direct') or DPOptimizer
-    (method='greedy') while keeping the same constructor signature
-    and ``optimize(method=...)`` API.
+    Delegates to ``NLPOptimizer`` or ``DPOptimizer`` while keeping the
+    same constructor signature and ``optimize(method=...)`` API.
+
+    Parameters
+    ----------
+    track : Track
+        Loaded track object.
+    vehicle : VehicleDynamics, optional
+        Vehicle model (uses defaults if omitted).
+    config : OptimizationConfig, optional
+        Optimization settings (uses defaults if omitted).
     """
 
     def __init__(
@@ -62,7 +83,6 @@ class TrajectoryOptimizer:
         self.vehicle = vehicle or VehicleDynamics()
         self.config = config or OptimizationConfig()
 
-        # Pre-build both backends lazily
         self._nlp: Optional[NLPOptimizer] = None
         self._dp: Optional[DPOptimizer] = None
 
@@ -70,62 +90,67 @@ class TrajectoryOptimizer:
         if self._nlp is None:
             if not _HAS_NLP:
                 raise ImportError(
-                    "CasADi is required for method='direct'.  "
+                    "CasADi is required for method='nlp'.  "
                     "Install with:  pip install casadi"
                 )
-            self._nlp = NLPOptimizer(
-                self.track, self.vehicle, self.config
-            )
+            self._nlp = NLPOptimizer(self.track, self.vehicle, self.config)
         return self._nlp
 
     def _get_dp(self) -> DPOptimizer:
         if self._dp is None:
-            self._dp = DPOptimizer(
-                self.track, self.vehicle, self.config
-            )
+            self._dp = DPOptimizer(self.track, self.vehicle, self.config)
         return self._dp
 
-    def optimize(self, method: str = "direct") -> OptimizationResult:
+    @property
+    def ds(self) -> float:
+        """Segment length (for backward compatibility with convergence code)."""
+        return self._get_dp().ds
+
+    def optimize(self, method: str = "nlp") -> OptimizationResult:
         """
         Run trajectory optimization.
 
-        Args:
-            method: 'direct' → NLP (CasADi/IPOPT)
-                    'greedy' → Dynamic Programming
+        Parameters
+        ----------
+        method : str
+            ``'nlp'``  → CasADi / IPOPT nonlinear program
+            ``'dp'``   → Dynamic Programming
+            ``'direct'`` / ``'greedy'`` → legacy aliases for nlp / dp
 
-        Returns:
-            OptimizationResult with optimized profiles
+        Returns
+        -------
+        OptimizationResult
         """
-        if method == "greedy":
+        backend = _METHOD_MAP.get(method, "NLPOptimizer")
+        if backend == "DPOptimizer":
             return self._get_dp().optimize()
         else:
             return self._get_nlp().optimize()
 
-    # Expose discretisation attributes for convergence_analysis compat
-    @property
-    def ds(self):
-        return self._get_dp().ds
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Convenience function
-# ═══════════════════════════════════════════════════════════════════════
 
 def optimize_trajectory(
     track_path: str,
     stop_distances: Optional[List[float]] = None,
     vehicle_config: Optional[VehicleConfig] = None,
+    method: str = "nlp",
 ) -> OptimizationResult:
     """
-    Convenience function to run full optimization.
+    Convenience function to run a full optimization.
 
-    Args:
-        track_path: Path to track CSV file
-        stop_distances: List of mandatory stop locations (m)
-        vehicle_config: Vehicle configuration
+    Parameters
+    ----------
+    track_path : str
+        Path to track CSV file.
+    stop_distances : list of float, optional
+        Mandatory stop locations (m).  Auto-detected if omitted.
+    vehicle_config : VehicleConfig, optional
+        Vehicle parameters.
+    method : str
+        ``'nlp'`` or ``'dp'`` (or legacy ``'direct'``/``'greedy'``).
 
-    Returns:
-        OptimizationResult
+    Returns
+    -------
+    OptimizationResult
     """
     track = Track(track_path)
     vehicle = VehicleDynamics(vehicle_config or VehicleConfig())
@@ -137,7 +162,7 @@ def optimize_trajectory(
         opt_config.stop_distances = track.get_worst_case_stop_locations()
 
     optimizer = TrajectoryOptimizer(track, vehicle, opt_config)
-    return optimizer.optimize()
+    return optimizer.optimize(method=method)
 
 
 if __name__ == "__main__":

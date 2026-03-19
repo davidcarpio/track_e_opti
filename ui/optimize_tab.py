@@ -53,7 +53,8 @@ class OptimizeTab(QWidget):
 
         # method
         self.combo_method = QComboBox()
-        self.combo_method.addItems(["direct", "greedy"])
+        self.combo_method.addItem("NLP (IPOPT)", "nlp")
+        self.combo_method.addItem("Dynamic Programming", "dp")
         form.addRow("Method:", self.combo_method)
 
         # nodes
@@ -62,6 +63,13 @@ class OptimizeTab(QWidget):
         self.spin_nodes.setValue(500)
         self.spin_nodes.setSingleStep(50)
         form.addRow("Nodes:", self.spin_nodes)
+
+        # max iterations
+        self.spin_iters = QSpinBox()
+        self.spin_iters.setRange(100, 10000)
+        self.spin_iters.setValue(2000)
+        self.spin_iters.setSingleStep(100)
+        form.addRow("Max iterations:", self.spin_iters)
 
         # stops override
         self.edit_stops = QLineEdit()
@@ -87,7 +95,7 @@ class OptimizeTab(QWidget):
         metrics = [
             ("Energy", "Wh"), ("Lap Time", "s"),
             ("Peak Power", "W"), ("Peak Force", "N"),
-            ("Avg Speed", "km/h"), ("Max Speed", "km/h"),
+            ("Avg Speed", "km/h"), ("Efficiency", "km/kWh"),
         ]
         for i, (name, unit) in enumerate(metrics):
             lbl_name = QLabel(f"{name}:")
@@ -155,12 +163,14 @@ class OptimizeTab(QWidget):
         config = OptimizationConfig(
             num_nodes=self.spin_nodes.value(),
             stop_distances=stop_distances,
+            max_iterations=self.spin_iters.value(),
         )
-        method = self.combo_method.currentText()
+        method = self.combo_method.currentData()
 
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("⏳ Optimising…")
         self.lbl_status.setStyleSheet(f"color: {ACCENT};")
+        self.state.set_status("⏳ Optimising…")
 
         self._worker = OptimizationWorker(
             self.state.track, self.state.vehicle, config, method
@@ -174,8 +184,18 @@ class OptimizeTab(QWidget):
         self._track_for_result = track
         self.btn_run.setEnabled(True)
         self.btn_export.setEnabled(True)
-        self.lbl_status.setText("✓ Optimisation complete")
+
+        # km/kWh
+        track_km = track.total_distance / 1000
+        e_kwh = result.total_energy / 3600 / 1000
+        km_kwh = track_km / e_kwh if e_kwh > 0 else 0
+
+        msg = (f"✓ {result.total_energy / 3600:.2f} Wh, "
+               f"{result.total_time:.1f} s, "
+               f"{km_kwh:.0f} km/kWh")
+        self.lbl_status.setText(msg)
         self.lbl_status.setStyleSheet(f"color: {SUCCESS};")
+        self.state.set_status(msg)
 
         # summary cards
         self._summary["Energy"].setText(f"{result.total_energy / 3600:.4f}")
@@ -183,9 +203,7 @@ class OptimizeTab(QWidget):
         self._summary["Peak Power"].setText(f"{result.peak_power:.0f}")
         self._summary["Peak Force"].setText(f"{result.peak_force:.0f}")
         self._summary["Avg Speed"].setText(f"{result.avg_velocity * 3.6:.1f}")
-        self._summary["Max Speed"].setText(
-            f"{np.max(result.velocities) * 3.6:.1f}"
-        )
+        self._summary["Efficiency"].setText(f"{km_kwh:.0f}")
 
         self._draw_plots(track, result)
 

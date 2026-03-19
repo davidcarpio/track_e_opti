@@ -33,6 +33,8 @@ _CATEGORIES: list[tuple[str, list]] = [
     ]),
     ("Tires & Grip", [
         ("crr", "Rolling Resist. (Crr)", "", 0.001, 0.1, 0.001, 4, ""),
+        ("crr_speed_coeff", "Crr Speed Coeff.", "", 0.0, 0.01, 0.00001, 5,
+         "Crr_eff = Crr × (1 + k·v²)"),
         ("tire_radius", "Tire Radius", "m", 0.1, 1.0, 0.01, 3, ""),
         ("mu_tire", "Tire Grip (μ)", "", 0.1, 2.0, 0.01, 2,
          "Rubber-on-asphalt friction coeff."),
@@ -54,12 +56,13 @@ _CATEGORIES: list[tuple[str, list]] = [
         ("battery_voltage", "Battery Voltage", "V", 10, 200, 1.0, 1, ""),
         ("max_motor_power", "Max Motor Power", "W", 50, 50000, 10.0, 0,
          "Rated continuous power"),
+        ("drivetrain_efficiency", "Drivetrain Eff.", "", 0.5, 1.0, 0.01, 2,
+         "Chain/belt/bearing losses (1.0 = ideal)"),
+        ("regen_efficiency", "Regen Efficiency", "", 0.0, 1.0, 0.01, 2,
+         "Regenerative braking efficiency (0 = no regen)"),
     ]),
     ("Limits", [
-        ("max_braking_decel", "Max Braking Decel", "m/s²", 0.5, 15.0, 0.1, 1,
-         "Comfort braking, not emergency"),
         ("max_velocity", "Max Velocity", "m/s", 1.0, 30.0, 0.1, 2, ""),
-        ("min_avg_velocity", "Min Avg Velocity", "m/s", 0.5, 20.0, 0.1, 2, ""),
     ]),
 ]
 

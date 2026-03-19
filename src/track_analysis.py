@@ -146,6 +146,11 @@ class Track:
         else:
             raise ValueError(f"Unsupported format: {fmt}")
 
+        # Centre coordinates so start = (0, 0)
+        x0, y0 = xs[0], ys[0]
+        xs = xs - x0
+        ys = ys - y0
+
         for i in range(len(distances)):
             self.points.append(TrackPoint(
                 distance=distances[i],

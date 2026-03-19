@@ -204,6 +204,19 @@ class NLPOptimizer(BaseOptimizer):
             lbg.append(-1e10)
             ubg.append(0.0)
 
+        # 4) Electrical power cap: P_elec ≤ max_motor_power
+        #    (force limit only caps mechanical power; after η losses
+        #     electrical power can exceed the rated value)
+        for i in range(n - 1):
+            v_avg = (v[i] + v[i + 1]) / 2
+            v_safe = _smooth_max(v_avg, v_floor)
+            accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
+            grade_i = float(self.grades[i])
+            p_elec_i = self._sym_electrical_power(v_safe, accel_i, grade_i)
+            g.append(p_elec_i - c.max_motor_power)  # must be ≤ 0
+            lbg.append(-1e10)
+            ubg.append(0.0)
+
         g_vec = ca.vertcat(*g)
 
         # ── initial guess: feasible from greedy-style heuristic ─────

@@ -36,7 +36,7 @@ class OptimizationConfig:
     stop_distances: List[float] = field(default_factory=list)
 
     # Optimization parameters
-    max_iterations: int = 500
+    max_iterations: int = 2000
     tol: float = 1e-6
 
     # Factor of Safety (FoS) on traction / braking limits
