@@ -52,20 +52,29 @@ class DPOptimizer(BaseOptimizer):
 
         Returns shape (n_nodes, n_vel) where grid[i] contains the
         feasible velocity levels at node *i*, up to v_max[i].
+
+        Non-stop nodes exclude v=0 to prevent the trivial all-zero
+        solution.  Stop nodes include v=0 as their only feasible level.
         """
         n = len(self.distances)
         nv = self.num_velocity_levels
 
         # Global max across all nodes for grid spacing
-        v_global_max = max(np.max(self.v_max), 0.1)
+        v_global_max = max(float(np.max(self.v_max)), 0.1)
 
-        # Uniform grid from 0 to v_global_max
-        v_levels = np.linspace(0.0, v_global_max, nv)
+        # For non-stop nodes: grid from v_min_moving to v_global_max
+        # Use a small positive floor to force the car to actually move
+        v_min_moving = 0.3  # m/s — below any useful speed but > 0
+        v_levels = np.linspace(v_min_moving, v_global_max, nv)
 
-        # At each node, clip to local v_max
         grid = np.tile(v_levels, (n, 1))  # (n, nv)
         for i in range(n):
-            grid[i] = np.clip(grid[i], 0.0, self.v_max[i])
+            if i in self.stop_indices:
+                # Stop nodes: all levels = 0
+                grid[i, :] = 0.0
+            else:
+                # Clip to local v_max
+                grid[i] = np.clip(grid[i], v_min_moving, self.v_max[i])
 
         return grid
 
@@ -100,13 +109,14 @@ class DPOptimizer(BaseOptimizer):
         return True
 
     def _segment_time(self, v1: float, v2: float) -> float:
-        """Time to traverse one segment."""
+        """Time to traverse one segment.  Returns INF if both v=0."""
         v_avg = (v1 + v2) / 2.0
         if v_avg > 1e-6:
             return self.ds / v_avg
         elif v1 > 1e-6 or v2 > 1e-6:
             return 2.0 * self.ds / max(v1, v2)
-        return 0.0
+        # Both zero: can't traverse a finite-length segment while stationary
+        return float('inf')
 
     # ── DP solve ────────────────────────────────────────────────────
 
