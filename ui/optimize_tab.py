@@ -229,13 +229,22 @@ class OptimizeTab(QWidget):
         ax.grid(True, alpha=0.3)
         self.pw_vel.draw()
 
-        # forces
+        # forces (longitudinal + lateral)
         ax = self.ax_force; ax.clear()
-        ax.plot(r.distances, r.force_traction, label="Traction", linewidth=1.2)
-        ax.plot(r.distances, r.force_drag,     label="Drag",     linewidth=1.2)
-        ax.plot(r.distances, r.force_rolling,  label="Rolling",  linewidth=1.2)
-        ax.plot(r.distances, r.force_grade,    label="Grade",    linewidth=1.2)
-        ax.legend(fontsize=8); ax.set_ylabel("Force (N)")
+        ax.plot(r.distances, r.force_traction, label="Traction (long.)",
+                linewidth=1.2, color=ACCENT)
+        ax.plot(r.distances, r.force_drag,     label="Drag",
+                linewidth=1.0, alpha=0.7)
+        ax.plot(r.distances, r.force_rolling,  label="Rolling",
+                linewidth=1.0, alpha=0.7)
+        ax.plot(r.distances, r.force_grade,    label="Grade",
+                linewidth=1.0, alpha=0.7)
+        # Lateral force = m * v² / R
+        mass = self.state.vehicle.config.mass
+        f_lateral = mass * r.lateral_acceleration
+        ax.plot(r.distances, f_lateral, label="Cornering (lat.)",
+                linewidth=1.2, color="#f7768e", ls="--")
+        ax.legend(fontsize=7, ncol=2); ax.set_ylabel("Force (N)")
         ax.set_xlabel("Distance (m)")
         ax.set_title("Force Breakdown", fontsize=10, fontweight="bold")
         ax.grid(True, alpha=0.3)
@@ -256,10 +265,18 @@ class OptimizeTab(QWidget):
         ax.grid(True, alpha=0.3)
         self.pw_energy.draw()
 
-        # acceleration
+        # acceleration (longitudinal + lateral)
         ax = self.ax_accel; ax.clear()
-        ax.plot(r.distances, r.accelerations, color="#e0af68", linewidth=1)
-        ax.axhline(0, color="#737aa2", ls="--", alpha=0.4)
+        ax.plot(r.distances, r.accelerations,
+                color="#e0af68", linewidth=1, label="Longitudinal")
+        ax.plot(r.distances, r.lateral_acceleration,
+                color="#f7768e", linewidth=1, ls="--", label="Lateral")
+        # Combined g-envelope
+        a_combined = np.sqrt(r.accelerations**2 + r.lateral_acceleration**2)
+        ax.plot(r.distances, a_combined,
+                color="#737aa2", linewidth=0.8, alpha=0.6, label="Combined")
+        ax.axhline(0, color="#737aa2", ls="--", alpha=0.3)
+        ax.legend(fontsize=7)
         ax.set_ylabel("Acceleration (m/s²)")
         ax.set_xlabel("Distance (m)")
         ax.set_title("Acceleration Profile", fontsize=10, fontweight="bold")
