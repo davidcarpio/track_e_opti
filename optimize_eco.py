@@ -86,7 +86,7 @@ Examples:
                         help='Export results to JSON')
     
     # Optimization parameters
-    parser.add_argument('--nodes', type=int, default=200,
+    parser.add_argument('--nodes', type=int, default=500,
                         help='Number of discretization nodes (default: 200)')
     parser.add_argument('--method', type=str, default='direct',
                         choices=['direct', 'greedy'],
