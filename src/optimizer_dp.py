@@ -64,7 +64,7 @@ class DPOptimizer(BaseOptimizer):
 
         # For non-stop nodes: grid from v_min_moving to v_global_max
         # Use a small positive floor to force the car to actually move
-        v_min_moving = 0.3  # m/s — below any useful speed but > 0
+        v_min_moving = 0.01  # m/s — below any useful speed but > 0
         v_levels = np.linspace(v_min_moving, v_global_max, nv)
 
         grid = np.tile(v_levels, (n, 1))  # (n, nv)
