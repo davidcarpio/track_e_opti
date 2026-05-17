@@ -99,9 +99,9 @@ class DPOptimizer(BaseOptimizer):
                 return False
         elif v_to < v_from:
             # Deceleration: check braking limit
-            a_brake = self.vehicle.max_braking_decel(
-                grade, self.config.traction_fos
-            )
+            f_brake_tire = self.vehicle.max_traction_force(v_from, grade)
+            f_resist = self.vehicle.total_resistance_force(v_from, grade)
+            a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
             # Can we brake? v_from² - v_to² ≤ 2·a_brake·ds
             if v_from ** 2 - v_to ** 2 > 2.0 * a_brake * ds + 1e-6:
                 return False

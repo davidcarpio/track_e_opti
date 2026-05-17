@@ -216,13 +216,7 @@ class BaseOptimizer(ABC):
 
             f_brake = self.vehicle.max_traction_force(v[i + 1], grade)
             f_resist = self.vehicle.total_resistance_force(v[i + 1], grade)
-            a_brake_traction = (
-                (f_brake + f_resist) / c.mass * self.config.traction_fos
-            )
-            a_brake = min(
-                a_brake_traction,
-                self.vehicle.max_braking_decel(grade, self.config.traction_fos),
-            )
+            a_brake = (f_brake + f_resist) / c.mass * self.config.traction_fos
 
             v_max_brake = np.sqrt(max(v[i + 1] ** 2 + 2 * a_brake * self.ds, 0))
             v[i] = min(v[i], v_max_brake)

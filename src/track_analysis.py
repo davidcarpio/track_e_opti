@@ -198,7 +198,8 @@ class Track:
         
         # Menger curvature: 2 * area / (d12 * d23 * d31)
         denom = d12 * d23 * d31
-        curvatures = np.where(denom > 1e-10, 2.0 * area2 / denom, 0.0)
+        safe_denom = np.where(denom > 1e-10, denom, 1.0)
+        curvatures = np.where(denom > 1e-10, 2.0 * area2 / safe_denom, 0.0)
         
         # Zero out points where window is too small (i_next - i_prev < 2)
         curvatures[i_next - i_prev < 2] = 0.0

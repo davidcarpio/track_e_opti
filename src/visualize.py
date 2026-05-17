@@ -173,8 +173,8 @@ def plot_gg_diagram(result: OptimizationResult,
     fig, ax = plt.subplots(figsize=(8, 8))
     
     g = 9.81
-    a_long = result.accelerations / g
-    a_lat = result.lateral_acceleration / g
+    a_long = np.array(result.accelerations, dtype=float) / g
+    a_lat = np.array(result.lateral_acceleration, dtype=float) / g
     
     # Plot friction circle
     theta = np.linspace(0, 2*np.pi, 100)
@@ -182,7 +182,7 @@ def plot_gg_diagram(result: OptimizationResult,
             linewidth=2, label=f'Friction limit (μ={mu})')
     
     # Plot operating points colored by velocity
-    scatter = ax.scatter(a_lat, a_long, c=result.velocities * 3.6,
+    scatter = ax.scatter(a_lat, a_long, c=np.array(result.velocities, dtype=float) * 3.6,
                         cmap='viridis', s=10, alpha=0.6)
     plt.colorbar(scatter, label='Velocity (km/h)')
     

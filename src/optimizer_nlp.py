@@ -51,14 +51,14 @@ def _smooth_motor_efficiency(p_mech: "ca.SX", p_rated: float) -> "ca.SX":
     eta_min = 0.50
     k = 0.12  # half-power load fraction
 
-    x = ca.fabs(p_mech) / p_rated
+    x = _smooth_abs(p_mech) / p_rated
     eta_raw = eta_max * x / (x + k)
-    return ca.fmax(eta_raw, eta_min)
+    return _smooth_max(eta_raw, eta_min)
 
 
-def _smooth_max(a, b, alpha: float = 50.0):
-    """Smooth approximation of max(a, b) using log-sum-exp."""
-    return (a + b) / 2 + ca.log(ca.exp(alpha * (a - b)) + 1) / alpha
+def _smooth_max(a, b, eps: float = 1e-4):
+    """Smooth approximation of max(a, b) using sqrt."""
+    return (a + b + ca.sqrt((a - b)**2 + eps**2)) / 2
 
 
 def _smooth_abs(x, eps: float = 1e-4):
@@ -125,7 +125,7 @@ class NLPOptimizer(BaseOptimizer):
             sigma = 1 / (1 + ca.exp(-100 * p_mech))
             return sigma * p_elec + (1 - sigma) * p_regen
         else:
-            return ca.fmax(p_elec, 0.0)
+            return _smooth_max(p_elec, 0.0)
 
     # ── NLP construction & solve ────────────────────────────────────
 
@@ -183,7 +183,7 @@ class NLPOptimizer(BaseOptimizer):
                 + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_prev * v_prev
             )
             f_motor = c.max_motor_power / v_prev
-            f_max = ca.fmin(f_trac, f_motor)
+            f_max = -_smooth_max(-f_trac, -f_motor)
             f_resist = self._sym_resistance_force(v_prev, grade_i)
             a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
 
@@ -193,14 +193,19 @@ class NLPOptimizer(BaseOptimizer):
             ubg.append(0.0)
 
         # 3) Braking feasibility
-        a_brake_max = float(
-            self.vehicle.max_braking_decel(
-                traction_fos=self.config.traction_fos
-            )
-        )
         for i in range(n - 1):
+            grade_i = float(self.grades[i])
+            v_next = _smooth_max(v[i + 1], v_floor)
+
+            f_brake_tire = c.mu_tire * (
+                c.mass * c.gravity * np.cos(np.arctan(grade_i))
+                + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_next * v_next
+            )
+            f_resist = self._sym_resistance_force(v_next, grade_i)
+            a_decel_max = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+
             decel_i = (v[i] ** 2 - v[i + 1] ** 2) / (2.0 * ds)
-            g.append(decel_i - a_brake_max)  # must be ≤ 0
+            g.append(decel_i - a_decel_max)  # must be <= 0
             lbg.append(-1e10)
             ubg.append(0.0)
 
@@ -220,20 +225,11 @@ class NLPOptimizer(BaseOptimizer):
         g_vec = ca.vertcat(*g)
 
         # ── initial guess: feasible from greedy-style heuristic ─────
-        v_avg_required = self.track.total_distance / self.config.max_lap_time
-        
-        # Iteratively increase target velocity until lap time constraint is met
-        v_target = v_avg_required
-        while v_target <= self.config.max_velocity * 1.5:  # Allow some headroom
-            v0 = np.minimum(self.v_max, v_target)
-            v0 = self._forward_pass(v0)
-            v0 = self._backward_pass(v0)
-            # Ensure initial guess is within bounds
-            v0 = np.clip(v0, lbv, ubv)
-            
-            if self.compute_lap_time(v0) <= self.config.max_lap_time:
-                break
-            v_target += 0.5  # Increment target velocity by 0.5 m/s
+        # Use robust optimal initial guess to help IPOPT converge
+        from .optimizer_dp import DPOptimizer
+        dp = DPOptimizer(self.track, self.vehicle, self.config, num_velocity_levels=80)
+        res = dp.optimize()
+        v0 = res.velocities
 
         # ── create NLP and solve ────────────────────────────────────
         nlp = {"x": v, "f": total_energy, "g": g_vec}
