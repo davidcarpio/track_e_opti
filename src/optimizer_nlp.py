@@ -220,12 +220,20 @@ class NLPOptimizer(BaseOptimizer):
         g_vec = ca.vertcat(*g)
 
         # ── initial guess: feasible from greedy-style heuristic ─────
-        v_target = self.track.total_distance / self.config.max_lap_time
-        v0 = np.minimum(self.v_max, v_target)
-        v0 = self._forward_pass(v0)
-        v0 = self._backward_pass(v0)
-        # Ensure initial guess is within bounds
-        v0 = np.clip(v0, lbv, ubv)
+        v_avg_required = self.track.total_distance / self.config.max_lap_time
+        
+        # Iteratively increase target velocity until lap time constraint is met
+        v_target = v_avg_required
+        while v_target <= self.config.max_velocity * 1.5:  # Allow some headroom
+            v0 = np.minimum(self.v_max, v_target)
+            v0 = self._forward_pass(v0)
+            v0 = self._backward_pass(v0)
+            # Ensure initial guess is within bounds
+            v0 = np.clip(v0, lbv, ubv)
+            
+            if self.compute_lap_time(v0) <= self.config.max_lap_time:
+                break
+            v_target += 0.5  # Increment target velocity by 0.5 m/s
 
         # ── create NLP and solve ────────────────────────────────────
         nlp = {"x": v, "f": total_energy, "g": g_vec}

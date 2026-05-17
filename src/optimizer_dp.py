@@ -120,24 +120,23 @@ class DPOptimizer(BaseOptimizer):
 
     # ── DP solve ────────────────────────────────────────────────────
 
-    def _solve(self, **kwargs) -> np.ndarray:
+    def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float, float]:
         """
-        Backward-induction DP over (distance, velocity) grid.
-
-        Time is tracked as a *cumulative resource* and pruned:
-        any state whose accumulated time already exceeds max_lap_time
-        is discarded.  This avoids an extra state dimension.
+        Backward-induction DP over (distance, velocity) grid using a
+        Lagrangian relaxation for the time constraint.
+        Cost = Energy + lam * Time
+        
+        Returns (velocities, lap_time, energy_cost).
         """
         n = len(self.distances)
         nv = self.num_velocity_levels
         ds = self.ds
-        T_max = self.config.max_lap_time
 
         grid = self._build_velocity_grid()  # (n, nv)
 
         INF = 1e18
 
-        # cost[i][j] = minimum energy to go from node i, vel level j, to end
+        # cost[i][j] = minimum lagrangian cost to go from node i, vel level j, to end
         # policy[i][j] = best vel level at node i+1
         # time_to_go[i][j] = time from node i to end along optimal path
         cost = np.full((n, nv), INF)
@@ -191,18 +190,11 @@ class DPOptimizer(BaseOptimizer):
                     )
                     seg_time = self._segment_time(v_from, v_to)
 
-                    # Cumulative time check
-                    total_time = seg_time + time_to_go[i + 1, k]
-                    # Allow small overshoot for numerical tolerance
-                    remaining_budget = T_max - total_time
-                    if remaining_budget < -0.5:
-                        continue  # would violate time constraint
-
-                    candidate = seg_energy + cost[i + 1, k]
+                    candidate = seg_energy + lam * seg_time + cost[i + 1, k]
                     if candidate < best_cost:
                         best_cost = candidate
                         best_k = k
-                        best_time = total_time
+                        best_time = seg_time + time_to_go[i + 1, k]
 
                 cost[i, j] = best_cost
                 policy[i, j] = best_k
@@ -223,14 +215,7 @@ class DPOptimizer(BaseOptimizer):
                 best_start_j = j
 
         if best_start_j < 0:
-            print("WARNING: DP found no feasible solution, "
-                  "falling back to forward/backward pass heuristic")
-            # Fall back to a simple feasible profile
-            v_target = self.track.total_distance / T_max
-            v_fb = np.minimum(self.v_max, v_target * 1.1)
-            v_fb = self._forward_pass(v_fb)
-            v_fb = self._backward_pass(v_fb)
-            return v_fb
+            return None, INF, INF
 
         # Trace optimal path
         velocities = np.zeros(n)
@@ -249,8 +234,69 @@ class DPOptimizer(BaseOptimizer):
 
         # Enforce exact stops
         velocities = self._enforce_stops(velocities)
+        lap_time = self.compute_lap_time(velocities)
+        
+        # Calculate actual energy without lambda penalty
+        energy_cost = best_start_cost - lam * lap_time
 
-        print(f"  DP grid: {n} nodes × {nv} velocity levels")
-        print(f"  Optimal energy: {best_start_cost:.1f} J "
-              f"({best_start_cost / 3600:.3f} Wh)")
-        return velocities
+        return velocities, lap_time, energy_cost
+
+    def _solve(self, **kwargs) -> np.ndarray:
+        """
+        Solve via a Lagrangian relaxation of the time constraint.
+        Uses bisection search on lambda to meet `max_lap_time`.
+        """
+        T_max = self.config.max_lap_time
+        
+        # 1. Try with no penalty (lam = 0)
+        v_fastest, t_fastest, _ = self._solve_for_lambda(0.0, **kwargs)
+        if v_fastest is None:
+            print("WARNING: DP found no feasible physical path even without time constraint!")
+            # Fall back to heuristic
+            v_target = self.track.total_distance / T_max
+            v_fb = np.minimum(self.v_max, v_target * 1.1)
+            v_fb = self._forward_pass(v_fb)
+            v_fb = self._backward_pass(v_fb)
+            return v_fb
+            
+        if t_fastest <= T_max:
+            # Unconstrained solution meets the time target!
+            print(f"  DP grid: {len(self.distances)} nodes × {self.num_velocity_levels} velocity levels")
+            return v_fastest
+
+        # 2. Bisection search over lambda
+        lam_low = 0.0
+        lam_high = 2000.0  # Max penalty starting point
+        best_v = None
+        best_time = float('inf')
+        
+        for _ in range(15):
+            lam = (lam_low + lam_high) / 2.0
+            v, t, _ = self._solve_for_lambda(lam, **kwargs)
+            
+            if v is None:
+                # Too much penalty, no path found? (Shouldn't happen for valid lambda)
+                lam_high = lam
+                continue
+                
+            if t > T_max:
+                # Still too slow, increase penalty for time
+                lam_low = lam
+            else:
+                # Fast enough, record it and try to decrease penalty for better energy
+                lam_high = lam
+                best_v = v
+                best_time = t
+
+        if best_v is not None:
+            print(f"  DP grid: {len(self.distances)} nodes × {self.num_velocity_levels} velocity levels")
+            print(f"  Converged lap time: {best_time:.1f} s (Target: {T_max:.1f} s)")
+            return best_v
+
+        print(f"WARNING: DP failed to converge to a solution meeting T_max <= {T_max:.1f}s.")
+        print("Falling back to forward/backward heuristic.")
+        v_target = self.track.total_distance / T_max
+        v_fb = np.minimum(self.v_max, v_target * 1.1)
+        v_fb = self._forward_pass(v_fb)
+        v_fb = self._backward_pass(v_fb)
+        return v_fb
