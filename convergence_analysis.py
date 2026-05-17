@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Convergence Analysis — General-purpose convergence study for TrackOpti.
+Convergence Analysis — node-count sweep for TrackOpti.
 
-Sweeps the number of discretisation nodes and records how key metrics
-(energy, lap time, peak power, peak force, …) evolve.  Works with any
-track file and optimisation configuration.
+Sweeps discretisation nodes and records how key metrics (energy, lap
+time, peak power, peak force, …) converge.  Works with any track file.
 
-Usage:
-    python convergence_analysis.py                          # defaults
+Usage::
+
+    python convergence_analysis.py
     python convergence_analysis.py --track data/tracks/sem_2025_eu.csv
-    python convergence_analysis.py --nodes 50,100,200,500 --method greedy
+    python convergence_analysis.py --nodes 50,100,200,500 --method dp
     python convergence_analysis.py --help
 """
 import sys
@@ -28,22 +28,22 @@ from src.vehicle_model import VehicleDynamics, VehicleConfig
 from src.trajectory_optimizer import TrajectoryOptimizer, OptimizationConfig
 
 
-# Helpers   
+# ── Logging ─────────────────────────────────────────────────────────
 
 def _make_logger(log_path: str):
-    """Return a log() function that writes to *log_path*."""
-    open(log_path, "w").close()            # truncate
+    """Return a log() function that writes to *log_path* and stdout."""
+    open(log_path, "w").close()
 
     def log(msg: str = ""):
         with open(log_path, "a") as f:
             f.write(msg + "\n")
             f.flush()
-        print(msg)                         # also echo to stdout
+        print(msg)
 
     return log
 
 
-#  Core convergence study 
+# ── Core convergence study ──────────────────────────────────────────
 
 def run_convergence_study(
     track: Track,
@@ -51,10 +51,9 @@ def run_convergence_study(
     *,
     stop_distances: list[float],
     node_counts: list[int],
-    method: str = "greedy",
-    min_avg_velocity: float | None = None,
+    method: str = "dp",
     max_lap_time: float | None = None,
-    max_iterations: int = 100,
+    max_iterations: int = 2000,
     log=print,
 ):
     """
@@ -65,34 +64,29 @@ def run_convergence_study(
     track, vehicle : loaded objects
     stop_distances : mandatory stop positions [m]
     node_counts    : list of N values to sweep
-    method         : 'greedy' or 'direct'
-    min_avg_velocity : m/s  (derived from max_lap_time if omitted)
-    max_lap_time     : seconds (derived from min_avg_velocity if omitted)
-    max_iterations   : per-optimisation iteration cap
-    log              : callable(str) for logging
+    method         : ``'dp'`` or ``'nlp'`` (aliases: ``'greedy'``, ``'direct'``)
+    max_lap_time   : seconds (default: 35 min / 11 laps ≈ 190.9 s)
+    max_iterations : per-optimisation iteration cap
+    log            : callable(str) for logging
 
     Returns
     -------
-    metrics : dict[str, list]   per-sweep metric lists
+    metrics : dict[str, list]
+        Per-sweep metric lists.
     results_map : dict[int, (TrajectoryOptimizer, OptimizationResult)]
+        Keyed by node count.
     """
-    # Derive missing time / speed constraint
-    if max_lap_time is None and min_avg_velocity is not None:
-        max_lap_time = track.total_distance / min_avg_velocity
-    elif min_avg_velocity is None and max_lap_time is not None:
-        min_avg_velocity = track.total_distance / max_lap_time
-    elif max_lap_time is None and min_avg_velocity is None:
-        # Default: 35 min race / 11 laps
+    if max_lap_time is None:
         max_lap_time = 35 * 60 / 11
-        min_avg_velocity = track.total_distance / max_lap_time
 
-    log(" CONVERGENCE ANALYSIS ")
+    log("═ CONVERGENCE ANALYSIS ═")
     log(f"Track length : {track.total_distance:.1f} m")
     log(f"Motor power  : {vehicle.config.max_motor_power} W")
-    log(f"Braking limit: {vehicle.config.max_braking_decel} m/s²")
-    log(f"Target speed : {min_avg_velocity * 3.6:.1f} km/h  "
-        f"| Max lap time: {max_lap_time:.1f} s")
+    log(f"μ tire       : {vehicle.config.mu_tire}")
+    log(f"Max lap time : {max_lap_time:.1f} s  "
+        f"(min avg speed ≈ {track.total_distance / max_lap_time * 3.6:.1f} km/h)")
     log(f"Method       : {method}")
+    log(f"Max iters    : {max_iterations}")
     log(f"Stops        : {[float(s) for s in stop_distances]}")
     log()
 
@@ -114,7 +108,6 @@ def run_convergence_study(
         config = OptimizationConfig(
             num_nodes=n,
             stop_distances=stop_distances,
-            min_avg_velocity=min_avg_velocity,
             max_lap_time=max_lap_time,
             max_iterations=max_iterations,
         )
@@ -123,8 +116,8 @@ def run_convergence_study(
         results_map[n] = (opt, result)
 
         E = result.total_energy / 3600
-        max_a = np.max(np.abs(result.accelerations))
-        v_max = np.max(result.velocities) * 3.6
+        max_a = float(np.max(np.abs(result.accelerations)))
+        v_max = float(np.max(result.velocities) * 3.6)
 
         metrics["nodes"].append(n)
         metrics["ds"].append(opt.ds)
@@ -143,7 +136,7 @@ def run_convergence_study(
     return metrics, results_map
 
 
-#  Plotting 
+# ── Plotting ────────────────────────────────────────────────────────
 
 def plot_convergence(metrics: dict, out_dir: str, log=print) -> str:
     """Plot 3×2 convergence graphs.  Returns saved path."""
@@ -186,45 +179,34 @@ def plot_lap_profile(results_map: dict, stop_distances: list[float],
     fig.suptitle(f"Lap Profile — {best_n} nodes",
                  fontsize=14, fontweight="bold")
 
-    # Velocity
-    ax = axes[0]
-    ax.plot(result.distances, result.velocities * 3.6, "b-", linewidth=1.5)
+    axes[0].plot(result.distances, result.velocities * 3.6, "b-", lw=1.5)
     for s in stop_distances:
-        ax.axvline(s, color="red", linestyle=":", alpha=0.4)
-    ax.set_ylabel("Velocity (km/h)")
-    ax.set_title("Velocity profile")
-    ax.grid(True, alpha=0.3)
+        axes[0].axvline(s, color="red", ls=":", alpha=0.4)
+    axes[0].set_ylabel("Velocity (km/h)")
+    axes[0].set_title("Velocity profile")
+    axes[0].grid(True, alpha=0.3)
 
-    # Acceleration
-    ax = axes[1]
-    ax.plot(result.distances, result.accelerations, "r-", linewidth=1)
-    ax.axhline(3.0, color="gray", linestyle="--", alpha=0.5,
-               label="Comfort brake limit")
-    ax.axhline(-3.0, color="gray", linestyle="--", alpha=0.5)
-    ax.set_ylabel("Acceleration (m/s²)")
-    ax.set_title("Acceleration profile")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    axes[1].plot(result.distances, result.accelerations, "r-", lw=1)
+    axes[1].axhline(0, color="gray", ls="--", alpha=0.5)
+    axes[1].set_ylabel("Acceleration (m/s²)")
+    axes[1].set_title("Acceleration profile")
+    axes[1].grid(True, alpha=0.3)
 
-    # Power
-    ax = axes[2]
-    ax.plot(result.distances, result.power_electrical / 1000,
-            "orange", linewidth=1)
-    ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5,
-               label="Motor rated (1 kW)")
-    ax.set_ylabel("Electrical Power (kW)")
-    ax.set_title("Power profile")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    axes[2].plot(result.distances, result.power_electrical / 1000,
+                 "orange", lw=1)
+    axes[2].axhline(vehicle_config_power(opt) / 1000, color="gray",
+                     ls="--", alpha=0.5, label="Motor rated")
+    axes[2].set_ylabel("Electrical Power (kW)")
+    axes[2].set_title("Power profile")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
 
-    # Energy
-    ax = axes[3]
-    ax.plot(result.distances, result.energy_cumulative / 3600,
-            "g-", linewidth=1.5)
-    ax.set_ylabel("Cumulative Energy (Wh)")
-    ax.set_xlabel("Distance (m)")
-    ax.set_title(f"Energy — {result.total_energy / 3600:.2f} Wh per lap")
-    ax.grid(True, alpha=0.3)
+    axes[3].plot(result.distances, result.energy_cumulative / 3600,
+                 "g-", lw=1.5)
+    axes[3].set_ylabel("Cumulative Energy (Wh)")
+    axes[3].set_xlabel("Distance (m)")
+    axes[3].set_title(f"Energy — {result.total_energy / 3600:.2f} Wh per lap")
+    axes[3].grid(True, alpha=0.3)
 
     plt.tight_layout()
     path = os.path.join(out_dir, "lap_profile.png")
@@ -234,39 +216,27 @@ def plot_lap_profile(results_map: dict, stop_distances: list[float],
     return path
 
 
-#  Efficiency curve plot (disabled: model property, not convergence) 
-# def plot_efficiency_curve(vehicle, out_dir, log=print):
-#     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-#     powers = np.linspace(1, 2000, 500)
-#     etas = [vehicle.motor_efficiency_at_power(p) for p in powers]
-#     ax.plot(powers, etas, "b-", linewidth=2)
-#     ax.axvline(1000, color="red", linestyle="--", alpha=0.5, label="Rated")
-#     ax.set_xlabel("Mechanical Power (W)")
-#     ax.set_ylabel("Efficiency")
-#     ax.set_title("Motor Efficiency Curve")
-#     ax.legend(); ax.grid(True, alpha=0.3); ax.set_ylim(0.4, 1.0)
-#     path = os.path.join(out_dir, "efficiency_curve.png")
-#     fig.savefig(path, dpi=150, bbox_inches="tight")
-#     plt.close(fig)
-#     log(f"Saved: {path}")
+def vehicle_config_power(opt):
+    """Extract motor power from optimizer's vehicle config."""
+    return opt.vehicle.config.max_motor_power
 
 
-#  CLI 
+# ── CLI ─────────────────────────────────────────────────────────────
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
-        description="Run a convergence study (node-count sweep) for TrackOpti.",
+        description="Run a convergence study (node-count sweep).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples
   python convergence_analysis.py
-  python convergence_analysis.py --nodes 50,100,200,500 --method greedy
-  python convergence_analysis.py --track data/tracks/sem_2025_eu.csv --stops 0,1177,2354
+  python convergence_analysis.py --nodes 50,100,200,500 --method dp
+  python convergence_analysis.py --track data/tracks/sem_2025_eu.csv
 """,
     )
     p.add_argument("--track", default="data/tracks/sem_2025_eu.csv",
                     help="Path to track CSV (default: %(default)s)")
-    p.add_argument("--method", default="greedy", choices=["greedy", "direct"],
+    p.add_argument("--method", default="dp", choices=["dp", "nlp"],
                     help="Optimisation method (default: %(default)s)")
     p.add_argument("--nodes", default="50,100,200,300,500,750,1000,1500",
                     help="Comma-separated node counts (default: %(default)s)")
@@ -282,6 +252,8 @@ Examples
     p.add_argument("--max-lap-time", type=float, default=None,
                     help="Max lap time in seconds "
                          "(default: 35 min / 11 laps ≈ 190.9 s)")
+    p.add_argument("--max-iterations", type=int, default=2000,
+                    help="Iteration limit per optimisation (default: %(default)s)")
     p.add_argument("--log", default="convergence_output.txt",
                     help="Log file path (default: %(default)s)")
     return p.parse_args(argv)
@@ -289,45 +261,36 @@ Examples
 
 def main(argv=None):
     args = parse_args(argv)
-
-    # Set up logging
     log = _make_logger(args.log)
 
-    # Load track
     track = Track(args.track)
-
-    # Configure vehicle
     vehicle = VehicleDynamics(VehicleConfig(
         mass=args.mass,
         max_motor_power=args.max_power,
     ))
 
-    # Determine stop locations
     if args.stops:
         stop_distances = [float(x) for x in args.stops.split(",")]
     else:
         worst = track.get_worst_case_stop_location()
         stop_distances = [0.0, worst, track.total_distance]
 
-    # Parse node counts
     node_counts = [int(x) for x in args.nodes.split(",")]
 
-    # Run convergence sweep
     metrics, results_map = run_convergence_study(
         track, vehicle,
         stop_distances=stop_distances,
         node_counts=node_counts,
         method=args.method,
         max_lap_time=args.max_lap_time,
+        max_iterations=args.max_iterations,
         log=log,
     )
 
-    # Generate plots
     os.makedirs(args.output, exist_ok=True)
     plot_convergence(metrics, args.output, log=log)
     plot_lap_profile(results_map, stop_distances, args.output, log=log)
 
-    # Summary at highest N
     best_n = max(node_counts)
     _, result = results_map[best_n]
     log(f"\n═══ SUMMARY at N={best_n} ═══")

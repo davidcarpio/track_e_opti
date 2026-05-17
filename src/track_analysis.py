@@ -13,6 +13,7 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -57,6 +58,16 @@ class Track:
         self._compute_curvature()
         self._compute_grade()
         self._identify_segments()
+        self._build_lookup_arrays()
+    
+    def _build_lookup_arrays(self):
+        """Cache numpy arrays for O(log n) distance lookups."""
+        self._distances_arr = np.array([p.distance for p in self.points])
+        self._elevations_arr = np.array([p.elevation for p in self.points])
+        self._x_arr = np.array([p.x for p in self.points])
+        self._y_arr = np.array([p.y for p in self.points])
+        self._curvatures_arr = np.array([p.curvature for p in self.points])
+        self._grades_arr = np.array([p.grade for p in self.points])
     
     # ------------------------------------------------------------------
     # CSV format detection & helpers
@@ -135,6 +146,11 @@ class Track:
         else:
             raise ValueError(f"Unsupported format: {fmt}")
 
+        # Centre coordinates so start = (0, 0)
+        x0, y0 = xs[0], ys[0]
+        xs = xs - x0
+        ys = ys - y0
+
         for i in range(len(distances)):
             self.points.append(TrackPoint(
                 distance=distances[i],
@@ -182,7 +198,8 @@ class Track:
         
         # Menger curvature: 2 * area / (d12 * d23 * d31)
         denom = d12 * d23 * d31
-        curvatures = np.where(denom > 1e-10, 2.0 * area2 / denom, 0.0)
+        safe_denom = np.where(denom > 1e-10, denom, 1.0)
+        curvatures = np.where(denom > 1e-10, 2.0 * area2 / safe_denom, 0.0)
         
         # Zero out points where window is too small (i_next - i_prev < 2)
         curvatures[i_next - i_prev < 2] = 0.0
@@ -212,7 +229,7 @@ class Track:
         distances = np.array([p.distance for p in self.points])
         elevations = np.array([p.elevation for p in self.points])
         
-        # Compute gradient (dy/dx)
+        # Compute gradient 
         # Handle potential division by zero (though unlikely with proper formatting)
         with np.errstate(divide='ignore', invalid='ignore'):
             grades = np.gradient(elevations, distances)
@@ -269,7 +286,7 @@ class Track:
     
     def get_point_at_distance(self, distance: float) -> TrackPoint:
         """
-        Get track point at a given distance (interpolated if needed).
+        Get track point at a given distance (O(log n) via searchsorted).
         
         Args:
             distance: Distance from lap line in m
@@ -280,23 +297,21 @@ class Track:
         # Handle wraparound
         distance = distance % self.total_distance
         
-        # Find bracketing points
-        for i in range(len(self.points) - 1):
-            if self.points[i].distance <= distance <= self.points[i+1].distance:
-                # Linear interpolation
-                p1, p2 = self.points[i], self.points[i+1]
-                t = (distance - p1.distance) / (p2.distance - p1.distance + 1e-10)
-                
-                return TrackPoint(
-                    distance=distance,
-                    elevation=p1.elevation + t * (p2.elevation - p1.elevation),
-                    x=p1.x + t * (p2.x - p1.x),
-                    y=p1.y + t * (p2.y - p1.y),
-                    curvature=p1.curvature + t * (p2.curvature - p1.curvature),
-                    grade=p1.grade + t * (p2.grade - p1.grade)
-                )
+        # Binary search for bracketing index
+        idx = np.searchsorted(self._distances_arr, distance, side='right') - 1
+        idx = np.clip(idx, 0, len(self._distances_arr) - 2)
         
-        return self.points[-1]
+        d1, d2 = self._distances_arr[idx], self._distances_arr[idx + 1]
+        t = (distance - d1) / (d2 - d1 + 1e-10)
+        
+        return TrackPoint(
+            distance=distance,
+            elevation=self._elevations_arr[idx] + t * (self._elevations_arr[idx + 1] - self._elevations_arr[idx]),
+            x=self._x_arr[idx] + t * (self._x_arr[idx + 1] - self._x_arr[idx]),
+            y=self._y_arr[idx] + t * (self._y_arr[idx + 1] - self._y_arr[idx]),
+            curvature=self._curvatures_arr[idx] + t * (self._curvatures_arr[idx + 1] - self._curvatures_arr[idx]),
+            grade=self._grades_arr[idx] + t * (self._grades_arr[idx + 1] - self._grades_arr[idx]),
+        )
     
     def get_curvature_at_distance(self, distance: float) -> float:
         """Get curvature at a given distance."""
@@ -413,8 +428,7 @@ if __name__ == "__main__":
     stop_distances = [0.0, worst_stop, track.total_distance]
     
     # Plot track overview
-    import matplotlib.pyplot as plt
-    
+   
     fig, axes = plt.subplots(3, 1, figsize=(12, 10))
     
     distances, elevations, curvatures, grades = track.get_arrays()

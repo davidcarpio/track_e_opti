@@ -88,9 +88,9 @@ Examples:
     # Optimization parameters
     parser.add_argument('--nodes', type=int, default=500,
                         help='Number of discretization nodes (default: 200)')
-    parser.add_argument('--method', type=str, default='direct',
-                        choices=['direct', 'greedy'],
-                        help='Optimization method (default: direct)')
+    parser.add_argument('--method', type=str, default='nlp',
+                        choices=['nlp', 'dp'],
+                        help='Optimization method (default: nlp)')
     
     return parser.parse_args()
 

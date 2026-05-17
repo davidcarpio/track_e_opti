@@ -28,6 +28,7 @@ class VehicleConfig:
     
     # Tire properties (Michelin 90/80 R16 estimates)
     crr: float = 0.010  # Rolling resistance coefficient (adjustable)
+    crr_speed_coeff: float = 5e-5  # Speed-dependent Crr term: Crr_eff = crr * (1 + k·v²)
     tire_radius: float = 0.282  # Wheel radius in m (90mm + 80% of 90mm + 8" rim)
     mu_tire: float = 0.8  # Friction coefficient (rubber on asphalt)
     
@@ -42,13 +43,11 @@ class VehicleConfig:
     motor_efficiency: float = 0.85  # Motor+controller peak efficiency
     battery_voltage: float = 60.0  # V
     max_motor_power: float = 1000.0  # W (rated continuous power)
-    
-    # Braking
-    max_braking_decel: float = 3.0  # m/s² (comfort braking, not emergency)
+    drivetrain_efficiency: float = 0.95  # Mechanical losses (chain/belt/bearings)
+    regen_efficiency: float = 0.0  # Regenerative braking efficiency (0 = no regen)
     
     # Limits
     max_velocity: float = 40.0 / 3.6  # 40 km/h in m/s
-    min_avg_velocity: float = 25.0 / 3.6  # 25 km/h in m/s
     
     # Environment
     gravity: float = 9.81  # m/s^2
@@ -110,9 +109,9 @@ class VehicleDynamics:
     
     def rolling_resistance_force(self, velocity: float, grade: float = 0.0) -> float:
         """
-        Calculate rolling resistance force.
+        Calculate rolling resistance force (velocity-dependent).
         
-        F_rr = Crr * N
+        F_rr = Crr_eff * N, where Crr_eff = Crr * (1 + k·v²)
         
         Args:
             velocity: Vehicle speed in m/s
@@ -123,7 +122,8 @@ class VehicleDynamics:
         """
         c = self.config
         normal = self.normal_force(velocity, grade)
-        return c.crr * normal
+        crr_eff = c.crr * (1.0 + c.crr_speed_coeff * velocity**2)
+        return crr_eff * normal
     
     def grade_force(self, grade: float) -> float:
         """
@@ -282,9 +282,10 @@ class VehicleDynamics:
     def electrical_power(self, velocity: float, acceleration: float,
                          grade: float = 0.0) -> float:
         """
-        Calculate electrical power from battery (no regen).
+        Calculate electrical power from battery.
         
-        Uses power-dependent motor efficiency curve.
+        Uses power-dependent motor efficiency curve and drivetrain losses.
+        Supports regenerative braking when regen_efficiency > 0.
         
         Args:
             velocity: Vehicle speed in m/s
@@ -292,17 +293,39 @@ class VehicleDynamics:
             grade: Road grade
             
         Returns:
-            Electrical power in W (always >= 0, no regen)
+            Electrical power in W (positive = draw, negative = regen)
         """
+        c = self.config
         p_mech = self.power_required(velocity, acceleration, grade)
         
         if p_mech > 0:
-            # Driving: divide by power-dependent efficiency
-            eta = self.motor_efficiency_at_power(p_mech)
-            return p_mech / eta
+            # Driving: motor + drivetrain losses
+            eta_motor = self.motor_efficiency_at_power(p_mech)
+            return p_mech / (eta_motor * c.drivetrain_efficiency)
+        elif c.regen_efficiency > 0:
+            # Braking with regen: return negative power (energy recovered)
+            eta_motor = self.motor_efficiency_at_power(abs(p_mech))
+            return p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
         else:
-            # Braking: no regeneration, return 0
+            # Braking: no regeneration
             return 0.0
+    
+    def max_braking_decel(self, grade: float = 0.0,
+                          traction_fos: float = 0.9) -> float:
+        """
+        Maximum braking deceleration from tire grip.
+        
+        Dynamically computed from μ·g, with Factor of Safety applied.
+        
+        Args:
+            grade: Road grade (affects normal force slightly)
+            traction_fos: Factor of Safety on traction (default 0.9)
+            
+        Returns:
+            Max deceleration in m/s² (positive value)
+        """
+        c = self.config
+        return c.mu_tire * c.gravity * traction_fos
     
     def energy_for_segment(self, v1: float, v2: float, distance: float,
                            grade: float = 0.0) -> float:

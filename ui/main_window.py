@@ -3,7 +3,7 @@ Main Window — QMainWindow with tab layout and shared application state.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Callable
 
 from PyQt6.QtWidgets import QMainWindow, QTabWidget
 from PyQt6.QtCore import QSize
@@ -20,6 +20,10 @@ class AppState:
         default_factory=lambda: VehicleDynamics(VehicleConfig())
     )
     stop_distances: list = field(default_factory=lambda: [0.0])
+    # Status bar callback — set by MainWindow
+    set_status: Callable[[str], None] = field(
+        default_factory=lambda: lambda msg: None
+    )
 
 
 class MainWindow(QMainWindow):
@@ -32,6 +36,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 850)
 
         self.state = AppState()
+        self.state.set_status = self.statusBar().showMessage
 
         # lazy-import tabs so theme is applied first
         from ui.track_tab import TrackTab
@@ -46,5 +51,3 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(ConvergenceTab(self.state),  "✓ Convergence")
         self.setCentralWidget(self.tabs)
 
-        # status bar
-        self.statusBar().showMessage("Ready, Steady, ...")

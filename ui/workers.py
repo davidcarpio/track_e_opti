@@ -26,7 +26,7 @@ class OptimizationWorker(QThread):
         track: Track,
         vehicle: VehicleDynamics,
         config: OptimizationConfig,
-        method: str = "direct",
+        method: str = "nlp",
         parent=None,
     ):
         super().__init__(parent)
@@ -60,9 +60,9 @@ class ConvergenceWorker(QThread):
         *,
         stop_distances: list,
         node_counts: list,
-        method: str = "greedy",
+        method: str = "dp",
         max_lap_time: float | None = None,
-        max_iterations: int = 100,
+        max_iterations: int = 2000,
         parent=None,
     ):
         super().__init__(parent)

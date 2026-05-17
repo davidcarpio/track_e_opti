@@ -53,7 +53,8 @@ class OptimizeTab(QWidget):
 
         # method
         self.combo_method = QComboBox()
-        self.combo_method.addItems(["direct", "greedy"])
+        self.combo_method.addItem("NLP (IPOPT)", "nlp")
+        self.combo_method.addItem("Dynamic Programming", "dp")
         form.addRow("Method:", self.combo_method)
 
         # nodes
@@ -62,6 +63,13 @@ class OptimizeTab(QWidget):
         self.spin_nodes.setValue(500)
         self.spin_nodes.setSingleStep(50)
         form.addRow("Nodes:", self.spin_nodes)
+
+        # max iterations
+        self.spin_iters = QSpinBox()
+        self.spin_iters.setRange(100, 10000)
+        self.spin_iters.setValue(2000)
+        self.spin_iters.setSingleStep(100)
+        form.addRow("Max iterations:", self.spin_iters)
 
         # stops override
         self.edit_stops = QLineEdit()
@@ -87,7 +95,7 @@ class OptimizeTab(QWidget):
         metrics = [
             ("Energy", "Wh"), ("Lap Time", "s"),
             ("Peak Power", "W"), ("Peak Force", "N"),
-            ("Avg Speed", "km/h"), ("Max Speed", "km/h"),
+            ("Avg Speed", "km/h"), ("Efficiency", "km/kWh"),
         ]
         for i, (name, unit) in enumerate(metrics):
             lbl_name = QLabel(f"{name}:")
@@ -155,12 +163,14 @@ class OptimizeTab(QWidget):
         config = OptimizationConfig(
             num_nodes=self.spin_nodes.value(),
             stop_distances=stop_distances,
+            max_iterations=self.spin_iters.value(),
         )
-        method = self.combo_method.currentText()
+        method = self.combo_method.currentData()
 
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("⏳ Optimising…")
         self.lbl_status.setStyleSheet(f"color: {ACCENT};")
+        self.state.set_status("⏳ Optimising…")
 
         self._worker = OptimizationWorker(
             self.state.track, self.state.vehicle, config, method
@@ -174,8 +184,18 @@ class OptimizeTab(QWidget):
         self._track_for_result = track
         self.btn_run.setEnabled(True)
         self.btn_export.setEnabled(True)
-        self.lbl_status.setText("✓ Optimisation complete")
+
+        # km/kWh
+        track_km = track.total_distance / 1000
+        e_kwh = result.total_energy / 3600 / 1000
+        km_kwh = track_km / e_kwh if e_kwh > 0 else 0
+
+        msg = (f"✓ {result.total_energy / 3600:.2f} Wh, "
+               f"{result.total_time:.1f} s, "
+               f"{km_kwh:.0f} km/kWh")
+        self.lbl_status.setText(msg)
         self.lbl_status.setStyleSheet(f"color: {SUCCESS};")
+        self.state.set_status(msg)
 
         # summary cards
         self._summary["Energy"].setText(f"{result.total_energy / 3600:.4f}")
@@ -183,9 +203,7 @@ class OptimizeTab(QWidget):
         self._summary["Peak Power"].setText(f"{result.peak_power:.0f}")
         self._summary["Peak Force"].setText(f"{result.peak_force:.0f}")
         self._summary["Avg Speed"].setText(f"{result.avg_velocity * 3.6:.1f}")
-        self._summary["Max Speed"].setText(
-            f"{np.max(result.velocities) * 3.6:.1f}"
-        )
+        self._summary["Efficiency"].setText(f"{km_kwh:.0f}")
 
         self._draw_plots(track, result)
 
@@ -211,13 +229,22 @@ class OptimizeTab(QWidget):
         ax.grid(True, alpha=0.3)
         self.pw_vel.draw()
 
-        # forces
+        # forces (longitudinal + lateral)
         ax = self.ax_force; ax.clear()
-        ax.plot(r.distances, r.force_traction, label="Traction", linewidth=1.2)
-        ax.plot(r.distances, r.force_drag,     label="Drag",     linewidth=1.2)
-        ax.plot(r.distances, r.force_rolling,  label="Rolling",  linewidth=1.2)
-        ax.plot(r.distances, r.force_grade,    label="Grade",    linewidth=1.2)
-        ax.legend(fontsize=8); ax.set_ylabel("Force (N)")
+        ax.plot(r.distances, r.force_traction, label="Traction (long.)",
+                linewidth=1.2, color=ACCENT)
+        ax.plot(r.distances, r.force_drag,     label="Drag",
+                linewidth=1.0, alpha=0.7)
+        ax.plot(r.distances, r.force_rolling,  label="Rolling",
+                linewidth=1.0, alpha=0.7)
+        ax.plot(r.distances, r.force_grade,    label="Grade",
+                linewidth=1.0, alpha=0.7)
+        # Lateral force = m * v² / R
+        mass = self.state.vehicle.config.mass
+        f_lateral = mass * r.lateral_acceleration
+        ax.plot(r.distances, f_lateral, label="Cornering (lat.)",
+                linewidth=1.2, color="#f7768e", ls="--")
+        ax.legend(fontsize=7, ncol=2); ax.set_ylabel("Force (N)")
         ax.set_xlabel("Distance (m)")
         ax.set_title("Force Breakdown", fontsize=10, fontweight="bold")
         ax.grid(True, alpha=0.3)
@@ -238,10 +265,18 @@ class OptimizeTab(QWidget):
         ax.grid(True, alpha=0.3)
         self.pw_energy.draw()
 
-        # acceleration
+        # acceleration (longitudinal + lateral)
         ax = self.ax_accel; ax.clear()
-        ax.plot(r.distances, r.accelerations, color="#e0af68", linewidth=1)
-        ax.axhline(0, color="#737aa2", ls="--", alpha=0.4)
+        ax.plot(r.distances, r.accelerations,
+                color="#e0af68", linewidth=1, label="Longitudinal")
+        ax.plot(r.distances, r.lateral_acceleration,
+                color="#f7768e", linewidth=1, ls="--", label="Lateral")
+        # Combined g-envelope
+        a_combined = np.sqrt(r.accelerations**2 + r.lateral_acceleration**2)
+        ax.plot(r.distances, a_combined,
+                color="#737aa2", linewidth=0.8, alpha=0.6, label="Combined")
+        ax.axhline(0, color="#737aa2", ls="--", alpha=0.3)
+        ax.legend(fontsize=7)
         ax.set_ylabel("Acceleration (m/s²)")
         ax.set_xlabel("Distance (m)")
         ax.set_title("Acceleration Profile", fontsize=10, fontweight="bold")
