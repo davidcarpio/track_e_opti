@@ -317,39 +317,9 @@ class OptimizeTab(QWidget):
         if not folder:
             return
         out = Path(folder)
-        out.mkdir(exist_ok=True)
-        r = self._result
 
-        # CSV
-        csv_path = out / "optimization_results.csv"
-        with open(csv_path, "w", newline="") as f:
-            w = csv_mod.writer(f)
-            w.writerow([
-                "distance_m", "velocity_ms", "velocity_kmh", "time_s",
-                "acceleration_ms2", "force_traction_N", "force_drag_N",
-                "force_rolling_N", "force_grade_N", "power_electrical_W",
-                "energy_cumulative_Wh", "lateral_acceleration_ms2",
-            ])
-            for i in range(len(r.distances)):
-                w.writerow([
-                    f"{r.distances[i]:.2f}",
-                    f"{r.velocities[i]:.3f}",
-                    f"{r.velocities[i]*3.6:.2f}",
-                    f"{r.times[i]:.2f}",
-                    f"{r.accelerations[i]:.4f}",
-                    f"{r.force_traction[i]:.2f}",
-                    f"{r.force_drag[i]:.2f}",
-                    f"{r.force_rolling[i]:.2f}",
-                    f"{r.force_grade[i]:.2f}",
-                    f"{r.power_electrical[i]:.2f}",
-                    f"{r.energy_cumulative[i]/3600:.4f}",
-                    f"{r.lateral_acceleration[i]:.4f}",
-                ])
-
-        # JSON
-        json_path = out / "optimization_results.json"
-        with open(json_path, "w") as f:
-            json.dump(r.to_dict(), f, indent=2)
+        from src.export import export_optimization_results
+        csv_path, json_path = export_optimization_results(self._result, out)
 
         QMessageBox.information(
             self, "Export Complete",

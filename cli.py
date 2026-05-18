@@ -6,7 +6,7 @@ Main entry point for running trajectory optimization to minimize
 energy consumption while meeting competition requirements.
 
 Usage:
-    python optimize_eco.py [options]
+    python cli.py [options]
 
 This will:
 1. Load the track data
@@ -47,10 +47,10 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python optimize_eco.py
-  python optimize_eco.py --mass 150 --crr 0.008
-  python optimize_eco.py --stops 80,450
-  python optimize_eco.py --output results/
+  python cli.py
+  python cli.py --mass 150 --crr 0.008
+  python cli.py --stops 80,450
+  python cli.py --output results/
         """
     )
     
@@ -148,6 +148,8 @@ def run_optimization(args) -> OptimizationResult:
     return track, result, stop_distances
 
 
+from src.export import export_optimization_results
+
 def export_results(track: Track, result: OptimizationResult, 
                    stop_distances: List[float], args):
     """Export results to files."""
@@ -157,47 +159,14 @@ def export_results(track: Track, result: OptimizationResult,
     
     print("\n[5] Exporting results...")
     
-    # Export to CSV
-    if args.export_csv:
-        csv_path = output_dir / 'optimization_results.csv'
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                'distance_m', 'velocity_ms', 'velocity_kmh', 'time_s',
-                'acceleration_ms2', 'force_traction_N', 'force_drag_N',
-                'force_rolling_N', 'force_grade_N', 'power_electrical_W',
-                'energy_cumulative_Wh', 'lateral_acceleration_ms2'
-            ])
-            for i in range(len(result.distances)):
-                writer.writerow([
-                    f"{result.distances[i]:.2f}",
-                    f"{result.velocities[i]:.3f}",
-                    f"{result.velocities[i]*3.6:.2f}",
-                    f"{result.times[i]:.2f}",
-                    f"{result.accelerations[i]:.4f}",
-                    f"{result.force_traction[i]:.2f}",
-                    f"{result.force_drag[i]:.2f}",
-                    f"{result.force_rolling[i]:.2f}",
-                    f"{result.force_grade[i]:.2f}",
-                    f"{result.power_electrical[i]:.2f}",
-                    f"{result.energy_cumulative[i]/3600:.4f}",
-                    f"{result.lateral_acceleration[i]:.4f}"
-                ])
-        print(f"  Saved CSV: {csv_path}")
-    
-    # Export to JSON
-    if args.export_json:
-        json_path = output_dir / 'optimization_results.json'
-        with open(json_path, 'w') as f:
-            json.dump(result.to_dict(), f, indent=2)
-        print(f"  Saved JSON: {json_path}")
-    
-    # Generate design information
-    recommendations_path = output_dir / 'design_info.txt'
-    with open(recommendations_path, 'w') as f:
-        f.write(generate_design_recommendations(result, args))
-    print(f"  Saved results: {recommendations_path}")
-    
+    # Use shared export method
+    if args.export_csv or args.export_json:
+        csv_path, json_path = export_optimization_results(result, output_dir)
+        if args.export_csv:
+            print(f"  Saved CSV: {csv_path}")
+        if args.export_json:
+            print(f"  Saved JSON: {json_path}")
+
     # Generate plots
     if not args.no_plots:
         print("\n[6] Generating visualizations...")
@@ -210,80 +179,6 @@ def export_results(track: Track, result: OptimizationResult,
                                    str(output_dir / 'summary.png'))
         except Exception as e:
             print(f"  Warning: Could not generate plots: {e}")
-
-
-def generate_design_recommendations(result: OptimizationResult, args) -> str:
-    """Generate design information based on optimization results."""
-    
-    # Calculate key design metrics
-    peak_current = result.peak_power / 60.0  # Assuming 60V nominal
-    avg_power = result.total_energy / result.total_time
-    peak_torque = result.peak_force * 0.282  # torque = F * wheel_radius
-    
-    # Acceleration statistics
-    max_accel = max(result.accelerations)
-    max_decel = abs(min(result.accelerations))
-    max_lat = max(result.lateral_acceleration)
-    
-    report = f"""
-================================================================================
-              DESIGN INPUTS
-================================================================================
-
-VEHICLE PARAMETERS USED:
-  Mass: {args.mass} kg
-  Rolling Resistance (Crr): {args.crr}
-  Motor Efficiency: {args.motor_efficiency*100:.0f}%
-
-OPTIMIZATION RESULTS:
-  Track Length: {result.distances[-1]:.1f} m
-  Lap Time: {result.total_time:.1f} s ({result.total_time/60:.2f} min)
-  Average Speed: {result.avg_velocity*3.6:.1f} km/h
-
-ENERGY CONSUMPTION:
-  Total Energy per Lap: {result.total_energy/3600:.4f} Wh
-  Energy per km: {result.total_energy/3600*1000/result.distances[-1]:.2f} Wh/km
-  Average Power Draw: {avg_power:.1f} W
-
---------------------------------------------------------------------------------
-                          CHASSIS 
---------------------------------------------------------------------------------
-
-ACCELERATION REQUIREMENTS:
-  - Max Longitudinal Accel: {max_accel:.2f} m/s² ({max_accel/9.81:.3f} g)
-  - Max Braking Decel: {max_decel:.2f} m/s² ({max_decel/9.81:.3f} g)
-  - Max Lateral Accel: {max_lat:.2f} m/s² ({max_lat/9.81:.3f} g)
-
-TIRE LOADING:
-  - Peak Longitudinal Force: {result.peak_force:.0f} N
-  - Design tires for: {result.peak_force*1.3:.0f} N with safety margin
-
-BRAKING SYSTEM:
-  - Peak braking force: {max_decel * args.mass:.0f} N
---------------------------------------------------------------------------------
-                          POWERTRAIN
---------------------------------------------------------------------------------
-
-MOTOR SIZING:
-  - Peak Power Required: {result.peak_power:.0f} W
-  - Continuous Power: ~{avg_power*1.5:.0f} W (1.5x average for margin)
-  - Recommended Motor: >{result.peak_power*1.2:.0f} W rated
-  
-  - Peak Torque at Wheel: {peak_torque:.2f} Nm
-  - Peak Wheel Force: {result.peak_force:.0f} N
-
-MOTOR CONTROLLER:
-  - Peak Current (at 60V): {peak_current:.1f} A
-  - Recommended Controller: >{peak_current*1.3:.0f} A continuous
-
-BATTERY PACK:
-  - Voltage: 60V nominal
-  - Minimum Capacity: {result.total_energy/3600/60*1000:.1f} mAh per lap
-  - For 25km race (~19 laps): {result.total_energy/3600*19:.1f} Wh minimum
-================================================================================
-"""
-    
-    return report
 
 
 def main():
