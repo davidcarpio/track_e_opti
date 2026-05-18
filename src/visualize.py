@@ -165,6 +165,11 @@ def plot_acceleration_profile(result: OptimizationResult, save_path: str = None)
 def plot_gg_diagram(result: OptimizationResult, 
                     mu: float = 0.8,
                     save_path: str = None):
+    # Fix types for matplotlib
+    velocities = np.array(result.velocities, dtype=np.float64)
+    accel = np.array(result.accelerations, dtype=np.float64)
+    lat_accel = np.array(result.lateral_acceleration, dtype=np.float64)
+    mu = float(mu)
     """
     Plot G-G diagram (lateral vs longitudinal acceleration).
     
@@ -173,8 +178,8 @@ def plot_gg_diagram(result: OptimizationResult,
     fig, ax = plt.subplots(figsize=(8, 8))
     
     g = 9.81
-    a_long = np.array(result.accelerations, dtype=float) / g
-    a_lat = np.array(result.lateral_acceleration, dtype=float) / g
+    a_long = accel / g
+    a_lat = lat_accel / g
     
     # Plot friction circle
     theta = np.linspace(0, 2*np.pi, 100)
@@ -182,7 +187,7 @@ def plot_gg_diagram(result: OptimizationResult,
             linewidth=2, label=f'Friction limit (μ={mu})')
     
     # Plot operating points colored by velocity
-    scatter = ax.scatter(a_lat, a_long, c=np.array(result.velocities, dtype=float) * 3.6,
+    scatter = ax.scatter(a_lat, a_long, c=velocities * 3.6,
                         cmap='viridis', s=10, alpha=0.6)
     plt.colorbar(scatter, label='Velocity (km/h)')
     
@@ -285,7 +290,7 @@ def plot_all(track: Track, result: OptimizationResult,
             str(output_dir / 'acceleration_profile.png') if output_dir else None),
         'gg_diagram': lambda: plot_gg_diagram(
             result,
-            str(output_dir / 'gg_diagram.png') if output_dir else None),
+            save_path=str(output_dir / 'gg_diagram.png') if output_dir else None),
         'track_map': lambda: plot_track_map(
             track, result,
             str(output_dir / 'track_map.png') if output_dir else None),

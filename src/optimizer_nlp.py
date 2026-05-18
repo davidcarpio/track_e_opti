@@ -57,13 +57,13 @@ def _smooth_motor_efficiency(p_mech: "ca.SX", p_rated: float) -> "ca.SX":
 
 
 def _smooth_max(a, b, eps: float = 1e-4):
-    """Smooth approximation of max(a, b) using sqrt."""
-    return (a + b + ca.sqrt((a - b)**2 + eps**2)) / 2
+    """Smooth approximation of max(a, b) using sqrt. (Modified for IPOPT stability)"""
+    return (a + b + ca.sqrt((a - b)**2 + eps)) / 2
 
 
 def _smooth_abs(x, eps: float = 1e-4):
-    """Smooth |x| ≈ sqrt(x² + eps²)."""
-    return ca.sqrt(x * x + eps * eps)
+    """Smooth |x| ≈ sqrt(x² + eps). (Modified for IPOPT stability)"""
+    return ca.sqrt(x * x + eps)
 
 
 class NLPOptimizer(BaseOptimizer):
@@ -110,9 +110,9 @@ class NLPOptimizer(BaseOptimizer):
         f_total = f_resist + c.mass * accel
         p_mech = f_total * v
 
-        eta = _smooth_motor_efficiency(p_mech, c.max_motor_power)
-        # Driving power / (motor_eff * drivetrain_eff), clamp to ≥ 0
-        p_elec = p_mech / (eta * c.drivetrain_efficiency)
+        p_driving = ca.fmax(p_mech, 0.0)
+        eta = _smooth_motor_efficiency(p_driving, c.max_motor_power)
+        p_elec = p_driving / (eta * c.drivetrain_efficiency)
 
         if c.regen_efficiency > 0:
             # Allow regen: p_elec can be negative
@@ -122,10 +122,10 @@ class NLPOptimizer(BaseOptimizer):
             p_regen = p_mech * eta_regen * c.drivetrain_efficiency * c.regen_efficiency
             # Use p_elec when p_mech > 0, p_regen when p_mech < 0
             # smooth switch via sigmoid
-            sigma = 1 / (1 + ca.exp(-100 * p_mech))
+            sigma = 0.5 * (1 + ca.tanh(5 * p_mech))
             return sigma * p_elec + (1 - sigma) * p_regen
         else:
-            return _smooth_max(p_elec, 0.0)
+            return p_elec
 
     # ── NLP construction & solve ────────────────────────────────────
 
@@ -141,16 +141,16 @@ class NLPOptimizer(BaseOptimizer):
         # ── objective: total electrical energy ──────────────────────
         total_energy = 0.0
         total_time_expr = 0.0
-        v_floor = 1e-3  # numerical floor for division
+        v_floor = 0.05
 
         for i in range(n - 1):
             v_avg = (v[i] + v[i + 1]) / 2
-            v_safe = _smooth_max(v_avg, v_floor)  # avoid /0
+            v_safe = v_avg
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
             grade_i = float(self.grades[i])
 
             p_elec = self._sym_electrical_power(v_safe, accel_i, grade_i)
-            dt_i = ds / v_safe
+            dt_i = 2.0 * ds / (v[i] + v[i+1] + 1e-3)
             total_energy += p_elec * dt_i
             total_time_expr += dt_i
 
@@ -168,21 +168,21 @@ class NLPOptimizer(BaseOptimizer):
         ubg = []
 
         # 1) Lap-time constraint: total_time ≤ max_lap_time
-        g.append(total_time_expr)
+        g.append(total_time_expr / 100.0)
         lbg.append(0.0)
-        ubg.append(float(self.config.max_lap_time))
+        ubg.append(float(self.config.max_lap_time) / 100.0)
 
         # 2) Acceleration feasibility (traction + motor limit)
         for i in range(n - 1):
             grade_i = float(self.grades[i])
-            v_prev = _smooth_max(v[i], v_floor)
+            v_prev = v[i]
 
             # Forward: (v[i+1]² - v[i]²) / (2·ds) ≤ a_max
             f_trac = c.mu_tire * (
                 c.mass * c.gravity * np.cos(np.arctan(grade_i))
                 + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_prev * v_prev
             )
-            f_motor = c.max_motor_power / v_prev
+            f_motor = c.max_motor_power / _smooth_max(v_prev, 0.5)
             f_max = -_smooth_max(-f_trac, -f_motor)
             f_resist = self._sym_resistance_force(v_prev, grade_i)
             a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
@@ -195,7 +195,7 @@ class NLPOptimizer(BaseOptimizer):
         # 3) Braking feasibility
         for i in range(n - 1):
             grade_i = float(self.grades[i])
-            v_next = _smooth_max(v[i + 1], v_floor)
+            v_next = v[i + 1]
 
             f_brake_tire = c.mu_tire * (
                 c.mass * c.gravity * np.cos(np.arctan(grade_i))
@@ -209,16 +209,14 @@ class NLPOptimizer(BaseOptimizer):
             lbg.append(-1e10)
             ubg.append(0.0)
 
-        # 4) Electrical power cap: P_elec ≤ max_motor_power
-        #    (force limit only caps mechanical power; after η losses
-        #     electrical power can exceed the rated value)
+                # 4) Electrical power cap: P_elec <= max_motor_power
         for i in range(n - 1):
             v_avg = (v[i] + v[i + 1]) / 2
-            v_safe = _smooth_max(v_avg, v_floor)
+            v_safe = v_avg
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
             grade_i = float(self.grades[i])
             p_elec_i = self._sym_electrical_power(v_safe, accel_i, grade_i)
-            g.append(p_elec_i - c.max_motor_power)  # must be ≤ 0
+            g.append((p_elec_i - c.max_motor_power) / 1000.0)
             lbg.append(-1e10)
             ubg.append(0.0)
 
@@ -232,13 +230,18 @@ class NLPOptimizer(BaseOptimizer):
         v0 = res.velocities
 
         # ── create NLP and solve ────────────────────────────────────
-        nlp = {"x": v, "f": total_energy, "g": g_vec}
+        nlp = {"x": v, "f": total_energy / 1000.0, "g": g_vec}
         opts = {
             "ipopt.max_iter": self.config.max_iterations,
             "ipopt.tol": self.config.tol,
             "ipopt.print_level": 3,
             "print_time": False,
             "ipopt.sb": "yes",
+
+            "ipopt.mu_strategy": "adaptive",
+            "ipopt.acceptable_tol": 10.0,
+            "ipopt.acceptable_obj_change_tol": 1e-1,
+            "ipopt.acceptable_iter": 10,
         }
         solver = ca.nlpsol("solver", "ipopt", nlp, opts)
 
