@@ -157,48 +157,105 @@ class DPOptimizer(BaseOptimizer):
         for i in range(n - 2, -1, -1):
             grade_i = float(self.grades[i])
             is_stop = i in self.stop_indices
+            next_is_stop = (i + 1) in self.stop_indices
 
-            for j in range(nv):
-                v_from = grid[i, j]
+            # Pre-compute valid velocities for this stage
+            v_from = grid[i, :][:, None]  # (nv, 1)
+            v_to = grid[i + 1, :][None, :] # (1, nv)
 
-                # If this is a stop node, only v=0 is allowed
-                if is_stop and v_from > 1e-6:
-                    continue
+            # Valid rows (from) and cols (to) due to stops
+            valid_from = np.ones(nv, dtype=bool)
+            if is_stop:
+                valid_from = grid[i, :] <= 1e-6
 
-                best_cost = INF
-                best_k = -1
-                best_time = INF
+            valid_to = np.ones(nv, dtype=bool)
+            if next_is_stop:
+                valid_to = grid[i + 1, :] <= 1e-6
 
-                for k in range(nv):
-                    v_to = grid[i + 1, k]
+            # Valid matrix (nv, nv)
+            valid_mask = valid_from[:, None] & valid_to[None, :]
 
-                    # Check if next node is a stop — only v=0 allowed
-                    if (i + 1) in self.stop_indices and v_to > 1e-6:
-                        continue
+            # Future cost must be finite
+            valid_mask &= (cost[i + 1, :][None, :] < INF)
 
-                    # Future cost must be finite
-                    if cost[i + 1, k] >= INF:
-                        continue
+            # Skip heavy computation if no valid transitions
+            if not np.any(valid_mask):
+                continue
 
-                    # Feasibility
-                    if not self._is_transition_feasible(v_from, v_to, grade_i):
-                        continue
+            # Only compute for valid pairs
+            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
+            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
 
-                    # Segment cost
-                    seg_energy = self.vehicle.energy_for_segment(
-                        v_from, v_to, ds, grade_i
-                    )
-                    seg_time = self._segment_time(v_from, v_to)
+            # Feasibility check (Vectorized)
+            feasible = np.ones_like(v_f_valid, dtype=bool)
 
-                    candidate = seg_energy + lam * seg_time + cost[i + 1, k]
-                    if candidate < best_cost:
-                        best_cost = candidate
-                        best_k = k
-                        best_time = seg_time + time_to_go[i + 1, k]
+            c = self.vehicle.config
 
-                cost[i, j] = best_cost
-                policy[i, j] = best_k
-                time_to_go[i, j] = best_time
+            mask_acc = v_t_valid > v_f_valid
+            if np.any(mask_acc):
+                v_ref = np.maximum(v_f_valid[mask_acc], 0.01)
+                f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
+                f_motor = self.vehicle.motor_limited_force(v_ref)
+                f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
+                f_max = np.minimum(f_traction, f_motor)
+                a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+                feasible[mask_acc] = (v_t_valid[mask_acc]**2 <= v_f_valid[mask_acc]**2 + 2.0 * a_max * ds + 1e-6)
+
+            mask_dec = v_t_valid < v_f_valid
+            if np.any(mask_dec):
+                f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
+                f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
+                a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+                feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)
+
+            valid_mask[valid_mask] = feasible
+
+            # Skip if still no valid pairs
+            if not np.any(valid_mask):
+                continue
+
+            # Compute segment energy and time
+            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
+            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
+
+            seg_energy = self.vehicle.energy_for_segment(v_f_valid, v_t_valid, ds, grade_i)
+
+            v_avg = (v_f_valid + v_t_valid) / 2.0
+            seg_time = np.full_like(v_avg, INF)
+            mask_avg = v_avg > 1e-6
+            seg_time[mask_avg] = ds / v_avg[mask_avg]
+
+            mask_zero_avg = ~mask_avg
+            if np.any(mask_zero_avg):
+                mask_any = (v_f_valid[mask_zero_avg] > 1e-6) | (v_t_valid[mask_zero_avg] > 1e-6)
+                if np.any(mask_any):
+                    # For elements where at least one is > 1e-6
+                    v_f_sub = v_f_valid[mask_zero_avg][mask_any]
+                    v_t_sub = v_t_valid[mask_zero_avg][mask_any]
+                    seg_time[mask_zero_avg][mask_any] = 2.0 * ds / np.maximum(v_f_sub, v_t_sub)
+
+            # Compute candidates
+            next_cost = np.broadcast_to(cost[i + 1, :][None, :], (nv, nv))[valid_mask]
+            candidates = seg_energy + lam * seg_time + next_cost
+
+            # Full candidate matrix initialized to INF
+            full_candidates = np.full((nv, nv), INF)
+            full_candidates[valid_mask] = candidates
+
+            full_seg_time = np.full((nv, nv), INF)
+            full_seg_time[valid_mask] = seg_time
+
+            # Find minimum cost for each 'from' state
+            best_costs = np.min(full_candidates, axis=1)
+            best_ks = np.argmin(full_candidates, axis=1)
+
+            valid_rows = best_costs < INF
+
+            cost[i, valid_rows] = best_costs[valid_rows]
+            policy[i, valid_rows] = best_ks[valid_rows]
+
+            best_k_valid = best_ks[valid_rows]
+            time_to_go[i, valid_rows] = full_seg_time[valid_rows, best_k_valid] + time_to_go[i + 1, best_k_valid]
 
         # ── forward trace ───────────────────────────────────────────
         # Find best starting velocity
