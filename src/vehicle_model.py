@@ -172,7 +172,7 @@ class VehicleDynamics:
         normal = self.normal_force(velocity, grade)
         return c.mu_tire * normal
     
-    def motor_limited_force(self, velocity: float) -> float:
+    def motor_limited_force(self, velocity: float | np.ndarray) -> float | np.ndarray:
         """
         Maximum force the motor can deliver at a given speed.
         
@@ -186,10 +186,14 @@ class VehicleDynamics:
         """
         c = self.config
         v_min = 0.5  # Below this, use stall torque estimate
-        v_eff = max(velocity, v_min)
+        if not isinstance(velocity, np.ndarray):
+            v_eff = max(velocity, v_min)
+            return c.max_motor_power / v_eff
+
+        v_eff = np.maximum(velocity, v_min)
         return c.max_motor_power / v_eff
     
-    def motor_efficiency_at_power(self, power_mech: float) -> float:
+    def motor_efficiency_at_power(self, power_mech: float | np.ndarray) -> float | np.ndarray:
         """
         Motor+controller efficiency as a function of mechanical power.
         
@@ -202,26 +206,51 @@ class VehicleDynamics:
         Returns:
             Efficiency (0..1)
         """
-        P = abs(power_mech)
+        P = np.abs(power_mech)
         P_rated = self.config.max_motor_power
         
-        if P < 5:
-            return 0.50  # Standstill/creep losses
+        if not isinstance(P, np.ndarray):
+            if P < 5:
+                return 0.50  # Standstill/creep losses
+
+            load = P / P_rated  # Fraction of rated power
+
+            if load < 0.15:
+                # Very light load: 50-70%
+                return 0.50 + load * (0.70 - 0.50) / 0.15
+            elif load < 0.5:
+                # Light to medium: 70-87%
+                return 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
+            elif load <= 1.0:
+                # Medium to full: 87-90% (peak)
+                return 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
+            else:
+                # Overload: drops from 90% (should be rare now with power limit)
+                return max(0.65, 0.90 - (load - 1.0) * 0.25)
+
+        # Preallocate output array
+        eff = np.zeros_like(P, dtype=float)
+
+        # Standstill condition
+        mask0 = P < 5
+        eff[mask0] = 0.50
+
+        # Other conditions
+        load = P / P_rated
         
-        load = P / P_rated  # Fraction of rated power
+        mask1 = (P >= 5) & (load < 0.15)
+        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
         
-        if load < 0.15:
-            # Very light load: 50-70%
-            return 0.50 + load * (0.70 - 0.50) / 0.15
-        elif load < 0.5:
-            # Light to medium: 70-87%
-            return 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
-        elif load <= 1.0:
-            # Medium to full: 87-90% (peak)
-            return 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
-        else:
-            # Overload: drops from 90% (should be rare now with power limit)
-            return max(0.65, 0.90 - (load - 1.0) * 0.25)
+        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
+        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
+
+        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
+        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
+
+        mask4 = (P >= 5) & (load > 1.0)
+        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
+
+        return eff
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -258,8 +287,8 @@ class VehicleDynamics:
         
         return min(v, c.max_velocity)
     
-    def power_required(self, velocity: float, acceleration: float, 
-                       grade: float = 0.0) -> float:
+    def power_required(self, velocity: float | np.ndarray, acceleration: float | np.ndarray,
+                       grade: float | np.ndarray = 0.0) -> float | np.ndarray:
         """
         Calculate mechanical power required at wheels.
         
@@ -279,8 +308,8 @@ class VehicleDynamics:
         f_total = f_resistance + f_accel
         return f_total * velocity
     
-    def electrical_power(self, velocity: float, acceleration: float,
-                         grade: float = 0.0) -> float:
+    def electrical_power(self, velocity: float | np.ndarray, acceleration: float | np.ndarray,
+                         grade: float | np.ndarray = 0.0) -> float | np.ndarray:
         """
         Calculate electrical power from battery.
         
@@ -298,17 +327,36 @@ class VehicleDynamics:
         c = self.config
         p_mech = self.power_required(velocity, acceleration, grade)
         
-        if p_mech > 0:
-            # Driving: motor + drivetrain losses
-            eta_motor = self.motor_efficiency_at_power(p_mech)
-            return p_mech / (eta_motor * c.drivetrain_efficiency)
-        elif c.regen_efficiency > 0:
-            # Braking with regen: return negative power (energy recovered)
-            eta_motor = self.motor_efficiency_at_power(abs(p_mech))
-            return p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
-        else:
-            # Braking: no regeneration
-            return 0.0
+        if not isinstance(p_mech, np.ndarray):
+            if p_mech > 0:
+                # Driving: motor + drivetrain losses
+                eta_motor = self.motor_efficiency_at_power(p_mech)
+                return p_mech / (eta_motor * c.drivetrain_efficiency)
+            elif c.regen_efficiency > 0:
+                # Braking with regen: return negative power (energy recovered)
+                eta_motor = self.motor_efficiency_at_power(abs(p_mech))
+                return p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
+            else:
+                # Braking: no regeneration
+                return 0.0
+
+        # Preallocate output array
+        p_elec = np.zeros_like(p_mech, dtype=float)
+
+        # Driving condition
+        mask_drive = p_mech > 0
+        if np.any(mask_drive):
+            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
+            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
+
+        # Braking with regen condition
+        if c.regen_efficiency > 0:
+            mask_regen = p_mech <= 0
+            if np.any(mask_regen):
+                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
+                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
+
+        return p_elec
     
     def max_braking_decel(self, grade: float = 0.0,
                           traction_fos: float = 0.9) -> float:
@@ -327,8 +375,8 @@ class VehicleDynamics:
         c = self.config
         return c.mu_tire * c.gravity * traction_fos
     
-    def energy_for_segment(self, v1: float, v2: float, distance: float,
-                           grade: float = 0.0) -> float:
+    def energy_for_segment(self, v1: float | np.ndarray, v2: float | np.ndarray, distance: float,
+                           grade: float | np.ndarray = 0.0) -> float | np.ndarray:
         """
         Calculate energy consumption for a segment.
         
@@ -341,17 +389,40 @@ class VehicleDynamics:
         Returns:
             Energy in J (Joules)
         """
+        if not isinstance(v1, np.ndarray):
+            if distance <= 0:
+                return 0.0
+
+            v_avg = (v1 + v2) / 2
+            if v_avg <= 0:
+                return 0.0
+
+            dt = distance / v_avg
+            accel = (v2**2 - v1**2) / (2 * distance) if distance > 0 else 0
+
+            p_elec = self.electrical_power(v_avg, accel, grade)
+            return p_elec * dt
+
         if distance <= 0:
-            return 0.0
-        
-        v_avg = (v1 + v2) / 2
-        if v_avg <= 0:
-            return 0.0
+            return np.zeros_like(v1)
             
-        dt = distance / v_avg
-        accel = (v2**2 - v1**2) / (2 * distance) if distance > 0 else 0
+        v_avg = (v1 + v2) / 2
+
+        mask_valid = v_avg > 0
+
+        dt = np.zeros_like(v_avg)
+        dt[mask_valid] = distance / v_avg[mask_valid]
         
-        p_elec = self.electrical_power(v_avg, accel, grade)
+        accel = np.zeros_like(v_avg)
+        if distance > 0:
+            accel = (v2**2 - v1**2) / (2 * distance)
+
+        p_elec = np.zeros_like(v_avg)
+        if np.any(mask_valid):
+            # We need grade to be aligned
+            grade_valid = grade[mask_valid] if isinstance(grade, np.ndarray) else grade
+            p_elec[mask_valid] = self.electrical_power(v_avg[mask_valid], accel[mask_valid], grade_valid)
+
         return p_elec * dt
 
 
