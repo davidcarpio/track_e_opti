@@ -134,15 +134,22 @@ class BaseOptimizer(ABC):
         self.distances = np.linspace(0, self.track.total_distance, n)
         self.ds = self.distances[1] - self.distances[0]
 
-        self.curvatures = np.array([
-            self.track.get_curvature_at_distance(d) for d in self.distances
-        ])
-        self.grades = np.array([
-            self.track.get_grade_at_distance(d) for d in self.distances
-        ])
-        self.radii = np.array([
-            self.track.get_radius_at_distance(d) for d in self.distances
-        ])
+        eval_distances = self.distances % self.track.total_distance
+        self.curvatures = np.interp(
+            eval_distances,
+            self.track._distances_arr,
+            self.track._curvatures_arr
+        )
+        self.grades = np.interp(
+            eval_distances,
+            self.track._distances_arr,
+            self.track._grades_arr
+        )
+
+        abs_curv = np.abs(self.curvatures)
+        self.radii = np.full_like(self.distances, np.inf)
+        valid = abs_curv >= 1e-6
+        self.radii[valid] = 1.0 / abs_curv[valid]
 
     # ── velocity envelope ───────────────────────────────────────────
 
