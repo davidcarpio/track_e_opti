@@ -43,7 +43,7 @@ python cli.py --help
 | `--max-power` | `1000` | Max motor power (W) |
 | `--stops` | auto-detected | Comma-separated stop distances (m) |
 | `--nodes` | `200` | Discretisation nodes |
-| `--method` | `direct` | `direct` or `greedy` |
+| `--method` | `nlp` | `nlp` or `dp` (legacy aliases `direct`/`greedy` are supported) |
 | `--no-plots` | off | Skip plot generation |
 
 
@@ -58,12 +58,26 @@ Loads track CSV, computes curvature via Menger formula, identifies
 straights/corners, finds worst-case mandatory-stop locations.
 
 ### `trajectory_optimizer.py`
-Optimises the velocity profile over the track using forward/backward
-traction-limited passes and `scipy.optimize.minimize` (L-BFGS-B).
+Backward-compatible façade for trajectory optimization. Delegates to `NLPOptimizer` or `DPOptimizer` solvers.
+
+### `optimizer_nlp.py`
+CasADi / IPOPT direct-collocation solver. Builds a smooth nonlinear program (NLP) with automatic derivatives. Provides high-quality, optimal solutions but can be slower.
+
+### `optimizer_dp.py`
+Backward-induction dynamic programming (DP) solver over a distance-velocity grid. Globally optimal within grid resolution, fast, and has no external dependencies.
+
+### `optimizer_base.py`
+Shared infrastructure for the optimizers, providing discretization, feasibility passes, and energy/time computation.
 
 ### `visualize.py`
 Generates velocity, force, energy, acceleration, G-G, and track-map plots
 using Matplotlib.
 
+## Roadmap
+
+Future improvements planned for TrackOpti:
+
+- **Energy per type visualization**: Provide detailed breakdowns of energy usage (e.g., aero drag, rolling resistance, braking).
+- **Finer vehicle dynamics**: Support advanced vehicle models, including front and rear load transfer dynamics.
 
 
