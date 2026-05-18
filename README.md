@@ -12,14 +12,23 @@ dynamics, tyre grip limits, and mandatory-stop rules.
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Run optimisation with default settings
-python optimize_eco.py
+# 2. Run the main desktop application
+python main.py
+```
 
-# 3. Or customise
-python optimize_eco.py --mass 150 --crr 0.008 --stops 80,450
+## Legacy CLI
 
-# 4. See all options
-python optimize_eco.py --help
+You can also run the legacy CLI tool to perform the optimization without the UI:
+
+```bash
+# Run optimisation with default settings
+python cli.py
+
+# Or customise parameters
+python cli.py --mass 150 --crr 0.008 --stops 80,450
+
+# See all options
+python cli.py --help
 ```
 
 ## Key CLI Options
