@@ -236,10 +236,7 @@ class BaseOptimizer(ABC):
         """Total energy consumption for a velocity profile (J)."""
         v1, v2 = velocities[:-1], velocities[1:]
         grades = self.grades[:-1]
-        energies = np.array([
-            self.vehicle.energy_for_segment(a, b, self.ds, g)
-            for a, b, g in zip(v1, v2, grades)
-        ])
+        energies = self.vehicle.energy_for_segment(v1, v2, self.ds, grades)
         return float(np.sum(energies))
 
     def compute_lap_time(self, velocities: np.ndarray) -> float:
@@ -308,14 +305,9 @@ class BaseOptimizer(ABC):
                 seg_dt[i] = 2.0 * self.ds / max(v1, v2)
 
         # Forces
-        seg_f_drag = np.array(
-            [self.vehicle.aero_drag_force(v) for v in seg_v_avg])
-        seg_f_rolling = np.array([
-            self.vehicle.rolling_resistance_force(v, g)
-            for v, g in zip(seg_v_avg, seg_grade)
-        ])
-        seg_f_grade = np.array(
-            [self.vehicle.grade_force(g) for g in seg_grade])
+        seg_f_drag = self.vehicle.aero_drag_force(seg_v_avg)
+        seg_f_rolling = self.vehicle.rolling_resistance_force(seg_v_avg, seg_grade)
+        seg_f_grade = self.vehicle.grade_force(seg_grade)
         seg_f_traction = (
             seg_f_drag + seg_f_rolling + seg_f_grade
             + self.vehicle.config.mass * seg_accel
@@ -323,17 +315,11 @@ class BaseOptimizer(ABC):
 
         # Power
         seg_p_mech = seg_f_traction * seg_v_avg
-        seg_p_elec = np.array([
-            self.vehicle.electrical_power(v, a, g)
-            for v, a, g in zip(seg_v_avg, seg_accel, seg_grade)
-        ])
+        seg_p_elec = self.vehicle.electrical_power(seg_v_avg, seg_accel, seg_grade)
 
         # Energy
-        seg_energy = np.array([
-            self.vehicle.energy_for_segment(
-                velocities[i], velocities[i + 1], self.ds, seg_grade[i])
-            for i in range(n_seg)
-        ])
+        seg_energy = self.vehicle.energy_for_segment(
+            velocities[:-1], velocities[1:], self.ds, seg_grade)
 
         # Aggregate to node arrays
         times = np.zeros(n)
