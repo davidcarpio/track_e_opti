@@ -196,6 +196,7 @@ def main():
         print("\n" + "=" * 60)
         print("OPTIMIZATION COMPLETE")
         print("=" * 60)
+        print("  Joke: Why do programmers prefer dark mode? Because light attracts bugs.")
         print(f"  Energy per lap: {result.total_energy/3600:.4f} Wh")
         print(f"  Lap time: {result.total_time:.1f} s")
         print(f"  Peak power: {result.peak_power:.0f} W")
