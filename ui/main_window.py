@@ -45,9 +45,9 @@ class MainWindow(QMainWindow):
         from ui.convergence_tab import ConvergenceTab
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(TrackTab(self.state),        "🮕 Track")
-        self.tabs.addTab(VehicleTab(self.state),      "𜲘 Vehicle")
-        self.tabs.addTab(OptimizeTab(self.state),     "⚡  Optimise")
-        self.tabs.addTab(ConvergenceTab(self.state),  "✓ Convergence")
+        self.tabs.addTab(TrackTab(self.state),        "Track")
+        self.tabs.addTab(VehicleTab(self.state),      "Vehicle")
+        self.tabs.addTab(OptimizeTab(self.state),     "Optimise")
+        self.tabs.addTab(ConvergenceTab(self.state),  "Convergence")
         self.setCentralWidget(self.tabs)
 
