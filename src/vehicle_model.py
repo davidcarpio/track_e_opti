@@ -89,7 +89,7 @@ class VehicleDynamics:
         c = self.config
         # Negative Cl means downforce (positive return value)
         return -0.5 * c.rho * c.cl * c.frontal_area * velocity**2
-    
+    # adjust based on wind direction
     def normal_force(self, velocity: float, grade: float = 0.0) -> float:
         """
         Calculate total normal force on tires.
