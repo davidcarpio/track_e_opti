@@ -91,8 +91,8 @@ class DPOptimizer(BaseOptimizer):
             f_traction = self.vehicle.max_traction_force(v_ref, grade)
             f_motor = self.vehicle.motor_limited_force(v_ref)
             f_resist = self.vehicle.total_resistance_force(v_ref, grade)
-            f_max = min(f_traction, f_motor)
-            a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+            f_max = min(f_traction * self.config.traction_fos, f_motor)
+            a_max = (f_max - f_resist) / c.mass
 
             # Can we reach v_to? v_to² ≤ v_from² + 2·a_max·ds
             if v_to ** 2 > v_from ** 2 + 2.0 * a_max * ds + 1e-6:
@@ -101,7 +101,7 @@ class DPOptimizer(BaseOptimizer):
             # Deceleration: check braking limit
             f_brake_tire = self.vehicle.max_traction_force(v_from, grade)
             f_resist = self.vehicle.total_resistance_force(v_from, grade)
-            a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+            a_brake = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
             # Can we brake? v_from² - v_to² ≤ 2·a_brake·ds
             if v_from ** 2 - v_to ** 2 > 2.0 * a_brake * ds + 1e-6:
                 return False
@@ -155,7 +155,7 @@ class DPOptimizer(BaseOptimizer):
 
         # ── backward induction ──────────────────────────────────────
         for i in range(n - 2, -1, -1):
-            grade_i = float(self.grades[i])
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             is_stop = i in self.stop_indices
             next_is_stop = (i + 1) in self.stop_indices
 

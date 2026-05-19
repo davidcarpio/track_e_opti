@@ -147,7 +147,7 @@ class NLPOptimizer(BaseOptimizer):
             v_avg = (v[i] + v[i + 1]) / 2
             v_safe = v_avg
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
-            grade_i = float(self.grades[i])
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
 
             p_elec = self._sym_electrical_power(v_safe, accel_i, grade_i)
             dt_i = 2.0 * ds / (v[i] + v[i+1] + 1e-3)
@@ -174,7 +174,7 @@ class NLPOptimizer(BaseOptimizer):
 
         # 2) Acceleration feasibility (traction + motor limit)
         for i in range(n - 1):
-            grade_i = float(self.grades[i])
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             v_prev = v[i]
 
             # Forward: (v[i+1]² - v[i]²) / (2·ds) ≤ a_max
@@ -183,9 +183,9 @@ class NLPOptimizer(BaseOptimizer):
                 + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_prev * v_prev
             )
             f_motor = c.max_motor_power / _smooth_max(v_prev, 0.5)
-            f_max = -_smooth_max(-f_trac, -f_motor)
+            f_max = -_smooth_max(-f_trac * self.config.traction_fos, -f_motor)
             f_resist = self._sym_resistance_force(v_prev, grade_i)
-            a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+            a_max = (f_max - f_resist) / c.mass
 
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
             g.append(accel_i - a_max)       # must be ≤ 0
@@ -194,7 +194,7 @@ class NLPOptimizer(BaseOptimizer):
 
         # 3) Braking feasibility
         for i in range(n - 1):
-            grade_i = float(self.grades[i])
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             v_next = v[i + 1]
 
             f_brake_tire = c.mu_tire * (
@@ -202,7 +202,7 @@ class NLPOptimizer(BaseOptimizer):
                 + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_next * v_next
             )
             f_resist = self._sym_resistance_force(v_next, grade_i)
-            a_decel_max = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+            a_decel_max = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
 
             decel_i = (v[i] ** 2 - v[i + 1] ** 2) / (2.0 * ds)
             g.append(decel_i - a_decel_max)  # must be <= 0
@@ -214,7 +214,7 @@ class NLPOptimizer(BaseOptimizer):
             v_avg = (v[i] + v[i + 1]) / 2
             v_safe = v_avg
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
-            grade_i = float(self.grades[i])
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             p_elec_i = self._sym_electrical_power(v_safe, accel_i, grade_i)
             g.append((p_elec_i - c.max_motor_power) / 1000.0)
             lbg.append(-1e10)

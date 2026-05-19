@@ -160,7 +160,7 @@ class BaseOptimizer(ABC):
         for i, (r, g) in enumerate(zip(self.radii, self.grades)):
             v_corner = self.vehicle.max_cornering_velocity(r, g)
             self.v_max[i] = min(
-                v_corner * self.config.traction_fos,
+                v_corner * np.sqrt(self.config.traction_fos),
                 self.config.max_velocity,
             )
 
@@ -199,14 +199,14 @@ class BaseOptimizer(ABC):
         c = self.vehicle.config
 
         for i in range(1, len(v)):
-            grade = self.grades[i]
+            grade = (self.grades[i-1] + self.grades[i]) / 2.0
 
             f_traction = self.vehicle.max_traction_force(v[i - 1], grade)
             f_resist = self.vehicle.total_resistance_force(v[i - 1], grade)
             f_motor = self.vehicle.motor_limited_force(v[i - 1])
-            f_max = min(f_traction, f_motor)
+            f_max = min(f_traction * self.config.traction_fos, f_motor)
 
-            a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+            a_max = (f_max - f_resist) / c.mass
             v_max_accel = np.sqrt(max(v[i - 1] ** 2 + 2 * a_max * self.ds, 0))
 
             v[i] = min(v[i], v_max_accel, self.v_max[i])
@@ -219,11 +219,11 @@ class BaseOptimizer(ABC):
         c = self.vehicle.config
 
         for i in range(len(v) - 2, -1, -1):
-            grade = self.grades[i]
+            grade = (self.grades[i] + self.grades[i+1]) / 2.0
 
             f_brake = self.vehicle.max_traction_force(v[i + 1], grade)
             f_resist = self.vehicle.total_resistance_force(v[i + 1], grade)
-            a_brake = (f_brake + f_resist) / c.mass * self.config.traction_fos
+            a_brake = (f_brake * self.config.traction_fos + f_resist) / c.mass
 
             v_max_brake = np.sqrt(max(v[i + 1] ** 2 + 2 * a_brake * self.ds, 0))
             v[i] = min(v[i], v_max_brake)
@@ -235,7 +235,7 @@ class BaseOptimizer(ABC):
     def compute_energy(self, velocities: np.ndarray) -> float:
         """Total energy consumption for a velocity profile (J)."""
         v1, v2 = velocities[:-1], velocities[1:]
-        grades = self.grades[:-1]
+        grades = (self.grades[:-1] + self.grades[1:]) / 2.0
         energies = self.vehicle.energy_for_segment(v1, v2, self.ds, grades)
         return float(np.sum(energies))
 
