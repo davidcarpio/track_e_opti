@@ -68,13 +68,15 @@ class DPOptimizer(BaseOptimizer):
         v_levels = np.linspace(v_min_moving, v_global_max, nv)
 
         grid = np.tile(v_levels, (n, 1))  # (n, nv)
-        for i in range(n):
-            if i in self.stop_indices:
-                # Stop nodes: all levels = 0
-                grid[i, :] = 0.0
-            else:
-                # Clip to local v_max
-                grid[i] = np.clip(grid[i], v_min_moving, self.v_max[i])
+
+        # Clip to local v_max using vectorized max expansion
+        v_max_expanded = self.v_max[:, np.newaxis]
+        grid = np.clip(grid, v_min_moving, v_max_expanded)
+
+        # Stop nodes: all levels = 0
+        if len(self.stop_indices) > 0:
+            stop_mask = np.isin(np.arange(n), list(self.stop_indices))
+            grid[stop_mask, :] = 0.0
 
         return grid
 
@@ -146,12 +148,13 @@ class DPOptimizer(BaseOptimizer):
         # ── terminal condition ──────────────────────────────────────
         # Last node: cost = 0 for all feasible velocities
         last_is_stop = (n - 1) in self.stop_indices
-        for j in range(nv):
-            v_last = grid[n - 1, j]
-            if last_is_stop and v_last > 1e-6:
-                continue  # must be 0 at stop
-            cost[n - 1, j] = 0.0
-            time_to_go[n - 1, j] = 0.0
+        if last_is_stop:
+            valid_mask = grid[n - 1, :] <= 1e-6
+            cost[n - 1, valid_mask] = 0.0
+            time_to_go[n - 1, valid_mask] = 0.0
+        else:
+            cost[n - 1, :] = 0.0
+            time_to_go[n - 1, :] = 0.0
 
         # ── backward induction ──────────────────────────────────────
         for i in range(n - 2, -1, -1):
@@ -260,18 +263,17 @@ class DPOptimizer(BaseOptimizer):
         # ── forward trace ───────────────────────────────────────────
         # Find best starting velocity
         first_is_stop = 0 in self.stop_indices
-        best_start_j = -1
-        best_start_cost = INF
 
-        for j in range(nv):
-            v_start = grid[0, j]
-            if first_is_stop and v_start > 1e-6:
-                continue
-            if cost[0, j] < best_start_cost:
-                best_start_cost = cost[0, j]
-                best_start_j = j
+        if first_is_stop:
+            valid_mask = grid[0, :] <= 1e-6
+            valid_costs = np.where(valid_mask, cost[0, :], INF)
+        else:
+            valid_costs = cost[0, :]
 
-        if best_start_j < 0:
+        best_start_j = int(np.argmin(valid_costs))
+        best_start_cost = valid_costs[best_start_j]
+
+        if best_start_cost >= INF:
             return None, INF, INF
 
         # Trace optimal path
