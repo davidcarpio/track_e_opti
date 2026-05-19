@@ -112,9 +112,16 @@ class TrackTab(QWidget):
         if not path:
             return
         from src.track_analysis import Track
+        import pandas as pd
+        from PyQt6.QtWidgets import QMessageBox
+
         try:
             track = Track(path)
-        except Exception:
+        except (OSError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+            QMessageBox.critical(
+                self, "Error Loading Track",
+                f"Failed to load track data from {path}:\n\n{str(e)}"
+            )
             for v in self._info_labels.values():
                 v.setText("error")
             return
