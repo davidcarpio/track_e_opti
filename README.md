@@ -79,5 +79,8 @@ Future improvements planned for TrackOpti:
 
 - **Energy per type visualization**: Provide detailed breakdowns of energy usage (e.g., aero drag, rolling resistance, braking).
 - **Finer vehicle dynamics**: Support advanced vehicle models, including front and rear load transfer dynamics.
+- **Wind vector dependent aero**
+- Better rolling resistance model
+- linearize by segments
 
 
