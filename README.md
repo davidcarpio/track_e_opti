@@ -82,5 +82,6 @@ Future improvements planned for TrackOpti:
 - **Wind vector dependent aero**
 - Better rolling resistance model
 - linearize by segments
+- Spiderweb diagram of energy
 
 
