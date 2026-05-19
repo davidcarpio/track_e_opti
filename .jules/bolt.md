@@ -1,3 +1,6 @@
 ## 2025-02-20 - [Vectorizing DP Optimization]
 **Learning:** Python loops inside Dynamic Programming backward induction create massive bottlenecks in this specific codebase context. Due to grid evaluation dimensions `O(nodes * V^2)`, standard loop implementations become prohibitively expensive for realistic resolutions (100 nodes x 80 velocity levels).
 **Action:** When working on grid-based calculations in DP optimization loops, always aggressively use vectorized operations via numpy matrix broadcasting to perform evaluation. Filtering calculations directly through numpy index masking yields two orders of magnitude in speedup while maintaining physical correctness.
+## 2026-05-19 - Precomputing Loop-Invariant Physics in DP Solver
+**Learning:** In Lagrangian relaxation DP, the time penalty lambda only affects the sum of segment energy and time, while the physical feasibility of transitions, segment energy cost, and segment time themselves are independent of lambda. Recomputing them during bisection search scales computation linearly with search iterations, creating a severe bottleneck.
+**Action:** Always precompute physical transition matrices (valid masks, segment energy, segment time) once per velocity grid buildup outside iterative search loops. Then fetch precalculated values per iteration using dynamic sub-masking for extreme speedups.
