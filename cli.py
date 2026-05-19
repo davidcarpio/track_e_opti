@@ -127,7 +127,10 @@ def run_optimization(args) -> OptimizationResult:
     # Each lap: v=0 at start (d=0), one worst-case mid-lap stop, v=0 at end
     print("\n[3] Setting up stop constraints...")
     if args.stops:
-        stop_distances = [float(x) for x in args.stops.split(',')]
+        try:
+            stop_distances = [float(x) for x in args.stops.split(',')]
+        except ValueError:
+            raise ValueError(f"Invalid format for --stops. Expected comma-separated numbers, got '{args.stops}'")
         print(f"  User-specified stops: {stop_distances}")
     else:
         worst = track.get_worst_case_stop_location()
