@@ -74,6 +74,18 @@ class OptimizationResult:
     # Lateral dynamics
     lateral_acceleration: np.ndarray
 
+    # Breakdown components (Wh) for Spiderweb / Energy Analysis
+    energy_aero_Wh: float = 0.0
+    energy_rolling_Wh: float = 0.0
+    energy_grade_Wh: float = 0.0
+    energy_drivetrain_loss_Wh: float = 0.0
+    energy_mechanical_braking_Wh: float = 0.0
+
+    # Potential/recoverable components (Wh)
+    energy_potential_grade_Wh: float = 0.0
+    energy_potential_kinetic_Wh: float = 0.0
+    energy_recovered_regen_Wh: float = 0.0
+
     def to_dict(self) -> dict:
         """Convert to dictionary for export."""
         return {
@@ -97,6 +109,14 @@ class OptimizationResult:
             'avg_velocity_kmh': self.avg_velocity * 3.6,
             'peak_power_W': self.peak_power,
             'peak_force_N': self.peak_force,
+            'energy_aero_Wh': self.energy_aero_Wh,
+            'energy_rolling_Wh': self.energy_rolling_Wh,
+            'energy_grade_Wh': self.energy_grade_Wh,
+            'energy_drivetrain_loss_Wh': self.energy_drivetrain_loss_Wh,
+            'energy_mechanical_braking_Wh': self.energy_mechanical_braking_Wh,
+            'energy_potential_grade_Wh': self.energy_potential_grade_Wh,
+            'energy_potential_kinetic_Wh': self.energy_potential_kinetic_Wh,
+            'energy_recovered_regen_Wh': self.energy_recovered_regen_Wh,
         }
 
 
@@ -321,6 +341,61 @@ class BaseOptimizer(ABC):
         seg_energy = self.vehicle.energy_for_segment(
             velocities[:-1], velocities[1:], self.ds, seg_grade)
 
+        # Calculate isolated component energy values using mechanical equations
+        # dt is the time over the segment
+        # Energy = Force * distance = Force * ds  (except for regen which goes through powertrain limits)
+
+        # 1. Aero Energy
+        seg_energy_aero = seg_f_drag * self.ds
+
+        # 2. Rolling Energy
+        seg_energy_rolling = seg_f_rolling * self.ds
+
+        # 3. Grade Energy (positive only)
+        seg_f_grade_positive = np.maximum(seg_f_grade, 0)
+        seg_energy_grade_up = seg_f_grade_positive * self.ds
+
+        # Potential Grade Energy (negative only)
+        seg_f_grade_negative = np.minimum(seg_f_grade, 0)
+        seg_energy_potential_grade = -seg_f_grade_negative * self.ds # absolute value of available potential
+
+        # 4. Mechanical braking vs Regen vs Drivetrain Loss
+        seg_energy_drivetrain_loss = np.zeros(n_seg)
+        seg_energy_mech_braking = np.zeros(n_seg)
+        seg_energy_regen_recovered = np.zeros(n_seg)
+        seg_energy_potential_kinetic = np.zeros(n_seg)
+
+        for i in range(n_seg):
+            # Drive mode
+            if seg_p_mech[i] > 0:
+                # Drivetrain loss is electrical energy spent minus mechanical work actually delivered
+                # Elec power > Mech power when driving
+                e_elec = seg_p_elec[i] * seg_dt[i]
+                e_mech = seg_p_mech[i] * seg_dt[i]
+                seg_energy_drivetrain_loss[i] = max(0.0, e_elec - e_mech)
+            # Brake mode
+            elif seg_p_mech[i] < 0:
+                e_mech = seg_p_mech[i] * seg_dt[i] # negative (energy to dissipate)
+                seg_energy_potential_kinetic[i] = -e_mech
+
+                # Recovered energy (if any, will be negative e_elec returning to battery)
+                e_elec = seg_p_elec[i] * seg_dt[i]
+                if e_elec < 0:
+                    seg_energy_regen_recovered[i] = -e_elec
+
+                # Dissipated by pads
+                # What isn't recovered by regen is lost as heat in brakes
+                # Mech power requested to stop - Mech power absorbed by regen motor
+                # e_regen_absorbed = e_elec / (eta_motor * eta_drive * eta_regen) roughly,
+                # But physically, if we recovered `e_elec`, we lost `e_mech - e_regen_absorbed`.
+                # For simplicity based on physical losses:
+                # The total mechanical braking needed was `abs(e_mech)`.
+                # If we don't have enough regen capacity or efficiency is low, the difference is heat.
+                # Actually, `electrical_power` models regen efficiency.
+                # Let's say all `e_mech` that isn't transformed to `e_elec` due to regen
+                # is basically lost in brakes/drivetrain. Let's just group that into braking loss.
+                seg_energy_mech_braking[i] = abs(e_mech) - abs(e_elec)
+
         # Aggregate to node arrays
         times = np.zeros(n)
         energy_cumulative = np.zeros(n)
@@ -384,4 +459,13 @@ class BaseOptimizer(ABC):
             peak_power=float(np.max(seg_p_elec)),
             peak_force=float(np.max(np.abs(seg_f_traction))),
             lateral_acceleration=lateral_acceleration,
+            # Energy breakdowns mapped from Joules to Wh
+            energy_aero_Wh=float(np.sum(seg_energy_aero)) / 3600,
+            energy_rolling_Wh=float(np.sum(seg_energy_rolling)) / 3600,
+            energy_grade_Wh=float(np.sum(seg_energy_grade_up)) / 3600,
+            energy_drivetrain_loss_Wh=float(np.sum(seg_energy_drivetrain_loss)) / 3600,
+            energy_mechanical_braking_Wh=float(np.sum(seg_energy_mech_braking)) / 3600,
+            energy_potential_grade_Wh=float(np.sum(seg_energy_potential_grade)) / 3600,
+            energy_potential_kinetic_Wh=float(np.sum(seg_energy_potential_kinetic)) / 3600,
+            energy_recovered_regen_Wh=float(np.sum(seg_energy_regen_recovered)) / 3600,
         )

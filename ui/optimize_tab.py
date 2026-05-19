@@ -122,12 +122,52 @@ class OptimizeTab(QWidget):
         self.pw_vel   = PlotWidget(figsize=(7, 3)); self.ax_vel   = self.pw_vel.add_subplot(111)
         self.pw_force = PlotWidget(figsize=(7, 3)); self.ax_force = self.pw_force.add_subplot(111)
         self.pw_energy= PlotWidget(figsize=(7, 3)); self.ax_energy= self.pw_energy.add_subplot(111)
+        self.pw_losses= PlotWidget(figsize=(7, 5)); self.ax_losses= self.pw_losses.add_subplot(111, polar=True)
         self.pw_accel = PlotWidget(figsize=(7, 3)); self.ax_accel = self.pw_accel.add_subplot(111)
         self.pw_map   = PlotWidget(figsize=(7, 5)); self.ax_map   = self.pw_map.add_subplot(111)
 
+        # We need a custom layout for the Energy Losses tab to show the potential items text box
+        self.tab_losses = QWidget()
+        lay_losses = QHBoxLayout(self.tab_losses)
+        lay_losses.setContentsMargins(0, 0, 0, 0)
+        lay_losses.addWidget(self.pw_losses, stretch=7)
+
+        # Side panel for specific values + Potential (Recoverable)
+        side_panel = QWidget()
+        side_lay = QVBoxLayout(side_panel)
+        side_lay.setContentsMargins(8, 8, 8, 8)
+
+        lbl_breakdown_title = QLabel("<b>Energy Breakdown (Wh)</b>")
+        side_lay.addWidget(lbl_breakdown_title)
+
+        self.lbl_loss_aero = QLabel("Aero: —")
+        self.lbl_loss_rolling = QLabel("Rolling: —")
+        self.lbl_loss_grade = QLabel("Grade (Up): —")
+        self.lbl_loss_drivetrain = QLabel("Drivetrain Loss: —")
+        self.lbl_loss_braking = QLabel("Mech Braking: —")
+        for lbl in [self.lbl_loss_aero, self.lbl_loss_rolling, self.lbl_loss_grade, self.lbl_loss_drivetrain, self.lbl_loss_braking]:
+            lbl.setStyleSheet(f"color: {TEXT_DIM};")
+            side_lay.addWidget(lbl)
+
+        side_lay.addSpacing(15)
+
+        lbl_potential_title = QLabel("<b>Potential / Recoverable (Wh)</b>")
+        side_lay.addWidget(lbl_potential_title)
+
+        self.lbl_pot_grade = QLabel("Downhill Grade: —")
+        self.lbl_pot_kinetic = QLabel("Kinetic Braking: —")
+        self.lbl_pot_regen = QLabel("Regen Recovered: —")
+        for lbl in [self.lbl_pot_grade, self.lbl_pot_kinetic, self.lbl_pot_regen]:
+            lbl.setStyleSheet(f"color: {TEXT_DIM};")
+            side_lay.addWidget(lbl)
+
+        side_lay.addStretch()
+        lay_losses.addWidget(side_panel, stretch=3)
+
         self.plot_tabs.addTab(self.pw_vel,   "Velocity")
         self.plot_tabs.addTab(self.pw_force, "Forces")
-        self.plot_tabs.addTab(self.pw_energy,"Energy")
+        self.plot_tabs.addTab(self.pw_energy,"Cumulative Energy")
+        self.plot_tabs.addTab(self.tab_losses, "Energy Losses")
         self.plot_tabs.addTab(self.pw_accel, "Acceleration")
         self.plot_tabs.addTab(self.pw_map,   "Map")
 
@@ -264,6 +304,60 @@ class OptimizeTab(QWidget):
         )
         ax.grid(True, alpha=0.3)
         self.pw_energy.draw()
+
+        # Energy Losses (Spiderweb)
+        ax = self.ax_losses; ax.clear()
+        categories = ['Aero', 'Rolling', 'Grade', 'Drivetrain', 'Braking']
+        values_wh = [
+            r.energy_aero_Wh,
+            r.energy_rolling_Wh,
+            r.energy_grade_Wh,
+            r.energy_drivetrain_loss_Wh,
+            r.energy_mechanical_braking_Wh
+        ]
+
+        # We need the values in percentage of the total of these 5 categories
+        total_loss = sum(values_wh)
+        if total_loss > 0:
+            percentages = [v / total_loss * 100 for v in values_wh]
+        else:
+            percentages = [0.0] * 5
+
+        # Number of variables we're plotting.
+        num_vars = len(categories)
+
+        # Compute angle each bar is centered on:
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+
+        # The plot is a circle, so we need to "complete the loop"
+        # and append the start value to the end.
+        values_wh += [values_wh[0]]
+        percentages += [percentages[0]]
+        angles += [angles[0]]
+
+        # Draw the outline of our data.
+        ax.plot(angles, percentages, color="#f7768e", linewidth=2, linestyle='solid')
+        # Fill it in.
+        ax.fill(angles, percentages, color="#f7768e", alpha=0.25)
+
+        # Draw one axe per variable and add labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(categories, fontsize=9, fontweight="bold", color=TEXT_DIM)
+
+        ax.set_title("Energy Losses Breakdown (%)", fontsize=10, fontweight="bold", y=1.1)
+        ax.grid(True, alpha=0.3)
+        self.pw_losses.draw()
+
+        # Update text labels
+        self.lbl_loss_aero.setText(f"Aero: {r.energy_aero_Wh:.3f} Wh")
+        self.lbl_loss_rolling.setText(f"Rolling: {r.energy_rolling_Wh:.3f} Wh")
+        self.lbl_loss_grade.setText(f"Grade (Up): {r.energy_grade_Wh:.3f} Wh")
+        self.lbl_loss_drivetrain.setText(f"Drivetrain Loss: {r.energy_drivetrain_loss_Wh:.3f} Wh")
+        self.lbl_loss_braking.setText(f"Mech Braking: {r.energy_mechanical_braking_Wh:.3f} Wh")
+
+        self.lbl_pot_grade.setText(f"Downhill Grade: {r.energy_potential_grade_Wh:.3f} Wh")
+        self.lbl_pot_kinetic.setText(f"Kinetic Braking: {r.energy_potential_kinetic_Wh:.3f} Wh")
+        self.lbl_pot_regen.setText(f"Regen Recovered: {r.energy_recovered_regen_Wh:.3f} Wh")
 
         # acceleration (longitudinal + lateral)
         ax = self.ax_accel; ax.clear()
