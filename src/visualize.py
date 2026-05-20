@@ -51,11 +51,21 @@ def plot_velocity_profile(result: OptimizationResult,
     # Acceleration on secondary axis
     ax_accel = ax.twinx()
 
-    ax_accel.fill_between(result.distances, 0, result.accelerations, where=result.accelerations > 0,
+    accel = result.accelerations
+    force = result.force_traction
+    eps = 1.0
+
+    mask_intent_accel = (accel > 0) & (force > eps)
+    mask_intent_brake = (accel < 0) & (force < -eps)
+    mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
+
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_intent_accel,
                           color="green", alpha=0.15, zorder=1)
-    ax_accel.fill_between(result.distances, 0, result.accelerations, where=result.accelerations < 0,
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_intent_brake,
                           color="red", alpha=0.15, zorder=1)
-    line_accel, = ax_accel.plot(result.distances, result.accelerations, color="gray", linewidth=1.0, alpha=0.6,
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_unintent,
+                          color="gray", alpha=0.2, zorder=1)
+    line_accel, = ax_accel.plot(result.distances, accel, color="gray", linewidth=1.0, alpha=0.6,
                                 label='Acceleration', zorder=1)
     ax_accel.set_ylabel('Acceleration (m/s²)', fontsize=12, color="gray")
     ax_accel.tick_params(axis='y', colors="gray")
@@ -357,11 +367,22 @@ def generate_summary_figure(track: Track, result: OptimizationResult,
     ax2.grid(True, alpha=0.3)
     
     ax_accel_summary = ax2.twinx()
-    ax_accel_summary.fill_between(result.distances, 0, result.accelerations, where=result.accelerations > 0,
+
+    accel = result.accelerations
+    force = result.force_traction
+    eps = 1.0
+
+    mask_intent_accel = (accel > 0) & (force > eps)
+    mask_intent_brake = (accel < 0) & (force < -eps)
+    mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
+
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_intent_accel,
                                   color="green", alpha=0.15, zorder=1)
-    ax_accel_summary.fill_between(result.distances, 0, result.accelerations, where=result.accelerations < 0,
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_intent_brake,
                                   color="red", alpha=0.15, zorder=1)
-    ax_accel_summary.plot(result.distances, result.accelerations, color="gray", linewidth=0.8, alpha=0.5, zorder=1)
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_unintent,
+                                  color="gray", alpha=0.2, zorder=1)
+    ax_accel_summary.plot(result.distances, accel, color="gray", linewidth=0.8, alpha=0.5, zorder=1)
     ax_accel_summary.set_ylabel('Accel (m/s²)', fontsize=10, color="gray")
     ax_accel_summary.tick_params(axis='y', colors="gray")
 
