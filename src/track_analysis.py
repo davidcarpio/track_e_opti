@@ -229,10 +229,19 @@ class Track:
         distances = np.array([p.distance for p in self.points])
         elevations = np.array([p.elevation for p in self.points])
         
-        # Compute gradient 
+        # Smooth elevations to eliminate high-frequency GPS noise
+        smoothing_window = 20
+        if len(elevations) > smoothing_window:
+            pad_width = smoothing_window // 2
+            elev_padded = np.pad(elevations, (pad_width, smoothing_window - 1 - pad_width), mode='edge')
+            elev_smooth = np.convolve(elev_padded, np.ones(smoothing_window)/smoothing_window, mode='valid')
+        else:
+            elev_smooth = elevations
+
+        # Compute gradient on smoothed elevations
         # Handle potential division by zero (though unlikely with proper formatting)
         with np.errstate(divide='ignore', invalid='ignore'):
-            grades = np.gradient(elevations, distances)
+            grades = np.gradient(elev_smooth, distances)
             
         # Replace Infs and NaNs with 0.0
         grades = np.nan_to_num(grades, nan=0.0, posinf=0.0, neginf=0.0)

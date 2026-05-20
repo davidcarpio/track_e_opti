@@ -1,3 +1,7 @@
 ## 2025-02-20 - [Vectorizing DP Optimization]
 **Learning:** Python loops inside Dynamic Programming backward induction create massive bottlenecks in this specific codebase context. Due to grid evaluation dimensions `O(nodes * V^2)`, standard loop implementations become prohibitively expensive for realistic resolutions (100 nodes x 80 velocity levels).
 **Action:** When working on grid-based calculations in DP optimization loops, always aggressively use vectorized operations via numpy matrix broadcasting to perform evaluation. Filtering calculations directly through numpy index masking yields two orders of magnitude in speedup while maintaining physical correctness.
+
+## 2026-05-20 - [Track Grade & Spatial Resolution Constraints]
+ **Learning:** [Raw GPS elevations contain high-frequency noise that produces wild gradients. Combining this with high spatial node counts (small `ds`) and fixed DP velocity grids causes massive acceleration penalties (dv^2/ds), forcing optimizers to artificially choose flat velocity profiles to avoid power spikes.]
+ **Action:** [When processing raw GPS track data, always apply a smoothing filter (like a moving average) to elevations before calculating grades. In DP trajectory solvers, dynamically scale velocity grid resolution inversely with spatial step size (or proportional to `sqrt(num_nodes)`) to maintain reachable dv thresholds over small distances.]
