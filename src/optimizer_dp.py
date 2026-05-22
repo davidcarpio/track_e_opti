@@ -120,75 +120,45 @@ class DPOptimizer(BaseOptimizer):
 
     # ── DP solve ────────────────────────────────────────────────────
 
-    def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float, float]:
+    def _precompute_transition_costs(self) -> None:
         """
-        Backward-induction DP over (distance, velocity) grid using a
-        Lagrangian relaxation for the time constraint.
-        Cost = Energy + lam * Time
-        
-        Returns (velocities, lap_time, energy_cost).
+        Precomputes the valid transitions, segment energy, and segment time
+        for the entire grid. These physical constraints are independent of lambda
+        and can be calculated exactly once before the bisection search.
         """
         n = len(self.distances)
         nv = self.num_velocity_levels
         ds = self.ds
-
-        grid = self._build_velocity_grid()  # (n, nv)
-
         INF = 1e18
 
-        # cost[i][j] = minimum lagrangian cost to go from node i, vel level j, to end
-        # policy[i][j] = best vel level at node i+1
-        # time_to_go[i][j] = time from node i to end along optimal path
-        cost = np.full((n, nv), INF)
-        policy = np.full((n, nv), -1, dtype=int)
-        time_to_go = np.full((n, nv), INF)
+        self._grid = self._build_velocity_grid()
+        self._trans_valid = [None] * (n - 1)
+        self._trans_energy = [None] * (n - 1)
+        self._trans_time = [None] * (n - 1)
 
-        # ── terminal condition ──────────────────────────────────────
-        # Last node: cost = 0 for all feasible velocities
-        last_is_stop = (n - 1) in self.stop_indices
-        for j in range(nv):
-            v_last = grid[n - 1, j]
-            if last_is_stop and v_last > 1e-6:
-                continue  # must be 0 at stop
-            cost[n - 1, j] = 0.0
-            time_to_go[n - 1, j] = 0.0
-
-        # ── backward induction ──────────────────────────────────────
         for i in range(n - 2, -1, -1):
             grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             is_stop = i in self.stop_indices
             next_is_stop = (i + 1) in self.stop_indices
 
-            # Pre-compute valid velocities for this stage
-            v_from = grid[i, :][:, None]  # (nv, 1)
-            v_to = grid[i + 1, :][None, :] # (1, nv)
+            v_from = self._grid[i, :][:, None]
+            v_to = self._grid[i + 1, :][None, :]
 
-            # Valid rows (from) and cols (to) due to stops
-            valid_from = np.ones(nv, dtype=bool)
-            if is_stop:
-                valid_from = grid[i, :] <= 1e-6
+            valid_from = self._grid[i, :] <= 1e-6 if is_stop else np.ones(nv, dtype=bool)
+            valid_to = self._grid[i + 1, :] <= 1e-6 if next_is_stop else np.ones(nv, dtype=bool)
 
-            valid_to = np.ones(nv, dtype=bool)
-            if next_is_stop:
-                valid_to = grid[i + 1, :] <= 1e-6
-
-            # Valid matrix (nv, nv)
             valid_mask = valid_from[:, None] & valid_to[None, :]
 
-            # Future cost must be finite
-            valid_mask &= (cost[i + 1, :][None, :] < INF)
-
-            # Skip heavy computation if no valid transitions
             if not np.any(valid_mask):
+                self._trans_valid[i] = valid_mask
+                self._trans_energy[i] = None
+                self._trans_time[i] = None
                 continue
 
-            # Only compute for valid pairs
             v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
             v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
 
-            # Feasibility check (Vectorized)
             feasible = np.ones_like(v_f_valid, dtype=bool)
-
             c = self.vehicle.config
 
             mask_acc = v_t_valid > v_f_valid
@@ -210,11 +180,12 @@ class DPOptimizer(BaseOptimizer):
 
             valid_mask[valid_mask] = feasible
 
-            # Skip if still no valid pairs
             if not np.any(valid_mask):
+                self._trans_valid[i] = valid_mask
+                self._trans_energy[i] = None
+                self._trans_time[i] = None
                 continue
 
-            # Compute segment energy and time
             v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
             v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
 
@@ -229,33 +200,78 @@ class DPOptimizer(BaseOptimizer):
             if np.any(mask_zero_avg):
                 mask_any = (v_f_valid[mask_zero_avg] > 1e-6) | (v_t_valid[mask_zero_avg] > 1e-6)
                 if np.any(mask_any):
-                    # For elements where at least one is > 1e-6
                     v_f_sub = v_f_valid[mask_zero_avg][mask_any]
                     v_t_sub = v_t_valid[mask_zero_avg][mask_any]
                     seg_time[mask_zero_avg][mask_any] = 2.0 * ds / np.maximum(v_f_sub, v_t_sub)
 
-            # Compute candidates
-            next_cost = np.broadcast_to(cost[i + 1, :][None, :], (nv, nv))[valid_mask]
-            candidates = seg_energy + lam * seg_time + next_cost
+            full_energy = np.full((nv, nv), INF)
+            full_energy[valid_mask] = seg_energy
 
-            # Full candidate matrix initialized to INF
-            full_candidates = np.full((nv, nv), INF)
-            full_candidates[valid_mask] = candidates
+            full_time = np.full((nv, nv), INF)
+            full_time[valid_mask] = seg_time
 
-            full_seg_time = np.full((nv, nv), INF)
-            full_seg_time[valid_mask] = seg_time
+            self._trans_valid[i] = valid_mask
+            self._trans_energy[i] = full_energy
+            self._trans_time[i] = full_time
 
-            # Find minimum cost for each 'from' state
-            best_costs = np.min(full_candidates, axis=1)
-            best_ks = np.argmin(full_candidates, axis=1)
+    def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float, float]:
+        """
+        Backward-induction DP over (distance, velocity) grid using a
+        Lagrangian relaxation for the time constraint.
+        Cost = Energy + lam * Time
+
+        Returns (velocities, lap_time, energy_cost).
+        """
+        n = len(self.distances)
+        nv = self.num_velocity_levels
+        INF = 1e18
+
+        # cost[i][j] = minimum lagrangian cost to go from node i, vel level j, to end
+        # policy[i][j] = best vel level at node i+1
+        # time_to_go[i][j] = time from node i to end along optimal path
+        cost = np.full((n, nv), INF)
+        policy = np.full((n, nv), -1, dtype=int)
+        time_to_go = np.full((n, nv), INF)
+
+        # ── terminal condition ──────────────────────────────────────
+        # Last node: cost = 0 for all feasible velocities
+        last_is_stop = (n - 1) in self.stop_indices
+        for j in range(nv):
+            v_last = self._grid[n - 1, j]
+            if last_is_stop and v_last > 1e-6:
+                continue  # must be 0 at stop
+            cost[n - 1, j] = 0.0
+            time_to_go[n - 1, j] = 0.0
+
+        # ── backward induction ──────────────────────────────────────
+        for i in range(n - 2, -1, -1):
+            if self._trans_energy[i] is None:
+                continue
+
+            valid_mask = self._trans_valid[i]
+            next_cost_mask = cost[i + 1, :] < INF
+
+            # Future cost must be finite
+            step_mask = valid_mask & next_cost_mask[None, :]
+            if not np.any(step_mask):
+                continue
+
+            # Compute candidates via broadcast
+            candidates = self._trans_energy[i] + lam * self._trans_time[i] + cost[i + 1, :][None, :]
+
+            # Mask out invalid using step_mask
+            candidates[~step_mask] = INF
+
+            best_costs = np.min(candidates, axis=1)
+            best_ks = np.argmin(candidates, axis=1)
 
             valid_rows = best_costs < INF
 
             cost[i, valid_rows] = best_costs[valid_rows]
             policy[i, valid_rows] = best_ks[valid_rows]
 
-            best_k_valid = best_ks[valid_rows]
-            time_to_go[i, valid_rows] = full_seg_time[valid_rows, best_k_valid] + time_to_go[i + 1, best_k_valid]
+            chosen_ks = best_ks[valid_rows]
+            time_to_go[i, valid_rows] = self._trans_time[i][valid_rows, chosen_ks] + time_to_go[i + 1, chosen_ks]
 
         # ── forward trace ───────────────────────────────────────────
         # Find best starting velocity
@@ -264,7 +280,7 @@ class DPOptimizer(BaseOptimizer):
         best_start_cost = INF
 
         for j in range(nv):
-            v_start = grid[0, j]
+            v_start = self._grid[0, j]
             if first_is_stop and v_start > 1e-6:
                 continue
             if cost[0, j] < best_start_cost:
@@ -277,7 +293,7 @@ class DPOptimizer(BaseOptimizer):
         # Trace optimal path
         velocities = np.zeros(n)
         j = best_start_j
-        velocities[0] = grid[0, j]
+        velocities[0] = self._grid[0, j]
 
         for i in range(n - 1):
             k = policy[i, j]
@@ -286,7 +302,7 @@ class DPOptimizer(BaseOptimizer):
                 velocities[i + 1] = 0.0
                 k = 0
             else:
-                velocities[i + 1] = grid[i + 1, k]
+                velocities[i + 1] = self._grid[i + 1, k]
             j = k
 
         # Enforce exact stops
@@ -305,6 +321,9 @@ class DPOptimizer(BaseOptimizer):
         """
         T_max = self.config.max_lap_time
         
+        # Precompute transition costs and constraints
+        self._precompute_transition_costs()
+
         # 1. Try with no penalty (lam = 0)
         v_fastest, t_fastest, _ = self._solve_for_lambda(0.0, **kwargs)
         if v_fastest is None:
