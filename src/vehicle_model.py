@@ -58,6 +58,34 @@ class VehicleDynamics:
     
     def __init__(self, config: VehicleConfig = None):
         self.config = config or VehicleConfig()
+
+        # Precomputed interpolation arrays for motor efficiency
+        # load = P / P_rated
+        # Mapping piecewise linear function:
+        # load < 0.15 -> 0.50 + load * (0.70 - 0.50) / 0.15
+        # 0.15 <= load < 0.5 -> 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
+        # 0.5 <= load <= 1.0 -> 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
+        # load > 1.0 -> max(0.65, 0.90 - (load - 1.0) * 0.25)
+        # Note: We also handle the P < 5 condition (which maps to load < 0.005 for P_rated=1000)
+        # by inserting points to flatline at 0.50 until load=0.005.
+
+        # We need generic points in case max_motor_power changes from 1000,
+        # so P=5 load threshold becomes 5.0 / max_motor_power
+        load_threshold = 5.0 / self.config.max_motor_power
+
+        # To avoid floating point issues when load_threshold is very close to 0.15,
+        # we will dynamically build xp and fp depending on max_motor_power.
+        # But for sem_2025, max_motor_power = 1000, threshold = 0.005.
+
+        if load_threshold < 0.15:
+            # Add a slight offset to create a vertical transition if needed, though continuous is fine.
+            # We want flat 0.5 from 0 to load_threshold. Then line from (load_threshold, eff(load_threshold)) to (0.15, 0.70)
+            eff_at_threshold = 0.50 + load_threshold * (0.70 - 0.50) / 0.15
+            self._eff_xp = np.array([0.0, load_threshold, load_threshold + 1e-9, 0.15, 0.5, 1.0, 2.0])
+            self._eff_fp = np.array([0.5, 0.5, eff_at_threshold, 0.70, 0.87, 0.90, 0.65])
+        else:
+            self._eff_xp = np.array([0.0, 0.15, 0.5, 1.0, 2.0])
+            self._eff_fp = np.array([0.5, 0.70, 0.87, 0.90, 0.65])
     
     def aero_drag_force(self, velocity: float) -> float:
         """
@@ -228,29 +256,9 @@ class VehicleDynamics:
                 # Overload: drops from 90% (should be rare now with power limit)
                 return max(0.65, 0.90 - (load - 1.0) * 0.25)
 
-        # Preallocate output array
-        eff = np.zeros_like(P, dtype=float)
-
-        # Standstill condition
-        mask0 = P < 5
-        eff[mask0] = 0.50
-
-        # Other conditions
+        # Vectorized mapping using precomputed interpolation points
         load = P / P_rated
-        
-        mask1 = (P >= 5) & (load < 0.15)
-        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
-        
-        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
-        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
-
-        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
-        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
-
-        mask4 = (P >= 5) & (load > 1.0)
-        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
-
-        return eff
+        return np.interp(load, self._eff_xp, self._eff_fp)
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -343,18 +351,20 @@ class VehicleDynamics:
         # Preallocate output array
         p_elec = np.zeros_like(p_mech, dtype=float)
 
+        # Compute efficiency for all elements at once using absolute power
+        p_mech_abs = np.abs(p_mech)
+        eta_motor = self.motor_efficiency_at_power(p_mech_abs)
+
         # Driving condition
         mask_drive = p_mech > 0
         if np.any(mask_drive):
-            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
-            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
+            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor[mask_drive] * c.drivetrain_efficiency)
 
         # Braking with regen condition
         if c.regen_efficiency > 0:
             mask_regen = p_mech <= 0
             if np.any(mask_regen):
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
-                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
+                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor[mask_regen] * c.drivetrain_efficiency * c.regen_efficiency
 
         return p_elec
     
