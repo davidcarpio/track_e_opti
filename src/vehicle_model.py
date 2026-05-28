@@ -228,29 +228,16 @@ class VehicleDynamics:
                 # Overload: drops from 90% (should be rare now with power limit)
                 return max(0.65, 0.90 - (load - 1.0) * 0.25)
 
-        # Preallocate output array
-        eff = np.zeros_like(P, dtype=float)
-
-        # Standstill condition
-        mask0 = P < 5
-        eff[mask0] = 0.50
-
-        # Other conditions
+        # Fast array interpolation
         load = P / P_rated
+        eff = np.interp(
+            load,
+            [0.0, 0.15, 0.5, 1.0, 2.0],
+            [0.50, 0.70, 0.87, 0.90, 0.65]
+        )
         
-        mask1 = (P >= 5) & (load < 0.15)
-        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
-        
-        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
-        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
-
-        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
-        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
-
-        mask4 = (P >= 5) & (load > 1.0)
-        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
-
-        return eff
+        # Override values for standstill condition
+        return np.where(P < 5, 0.50, eff)
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -340,21 +327,19 @@ class VehicleDynamics:
                 # Braking: no regeneration
                 return 0.0
 
-        # Preallocate output array
+        # Compute efficiency for the entire absolute power array in one pass
+        eta_motor = self.motor_efficiency_at_power(np.abs(p_mech))
+
         p_elec = np.zeros_like(p_mech, dtype=float)
 
         # Driving condition
         mask_drive = p_mech > 0
-        if np.any(mask_drive):
-            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
-            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
+        p_elec = np.where(mask_drive, p_mech / (eta_motor * c.drivetrain_efficiency), p_elec)
 
         # Braking with regen condition
         if c.regen_efficiency > 0:
             mask_regen = p_mech <= 0
-            if np.any(mask_regen):
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
-                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
+            p_elec = np.where(mask_regen, p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency, p_elec)
 
         return p_elec
     
