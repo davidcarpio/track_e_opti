@@ -4,6 +4,8 @@ Trajectory optimization system for the **Shell Eco-marathon** competition.
 Minimises per-lap energy consumption while respecting track geometry, vehicle
 dynamics, tyre grip limits, and mandatory-stop rules.
 
+![User Interface](.assets/ui.png)
+
 ---
 
 ## Quick Start
