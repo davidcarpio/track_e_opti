@@ -1,4 +1,5 @@
-# TrackOpti — Shell Eco-marathon Energy Optimization
+# Track eOpti 
+## Shell Eco-marathon 
 
 Trajectory optimization system for the **Shell Eco-marathon** competition.  
 Minimises per-lap energy consumption while respecting track geometry, vehicle
