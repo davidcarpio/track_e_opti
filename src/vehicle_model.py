@@ -206,51 +206,25 @@ class VehicleDynamics:
         Returns:
             Efficiency (0..1)
         """
-        P = np.abs(power_mech)
+        P_abs = np.abs(power_mech)
         P_rated = self.config.max_motor_power
         
-        if not isinstance(P, np.ndarray):
-            if P < 5:
-                return 0.50  # Standstill/creep losses
-
-            load = P / P_rated  # Fraction of rated power
-
-            if load < 0.15:
-                # Very light load: 50-70%
-                return 0.50 + load * (0.70 - 0.50) / 0.15
-            elif load < 0.5:
-                # Light to medium: 70-87%
-                return 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
-            elif load <= 1.0:
-                # Medium to full: 87-90% (peak)
-                return 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
-            else:
-                # Overload: drops from 90% (should be rare now with power limit)
-                return max(0.65, 0.90 - (load - 1.0) * 0.25)
-
-        # Preallocate output array
-        eff = np.zeros_like(P, dtype=float)
-
-        # Standstill condition
-        mask0 = P < 5
-        eff[mask0] = 0.50
-
-        # Other conditions
-        load = P / P_rated
+        load = P_abs / P_rated
         
-        mask1 = (P >= 5) & (load < 0.15)
-        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
+        # Define piece-wise linear points for interpolation
+        xp = np.array([0.0, 0.15, 0.5, 1.0, 2.0])
+        yp = np.array([0.50, 0.70, 0.87, 0.90, 0.65])
         
-        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
-        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
+        if not isinstance(P_abs, np.ndarray):
+            if P_abs < 5:
+                return 0.50
+            return float(np.interp(load, xp, yp, right=0.65))
 
-        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
-        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
+        # Vectorized interpolation is much faster than multiple boolean masks
+        eff = np.interp(load, xp, yp, right=0.65)
 
-        mask4 = (P >= 5) & (load > 1.0)
-        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
-
-        return eff
+        # Apply standstill threshold
+        return np.where(P_abs < 5, 0.50, eff)
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -340,23 +314,19 @@ class VehicleDynamics:
                 # Braking: no regeneration
                 return 0.0
 
-        # Preallocate output array
-        p_elec = np.zeros_like(p_mech, dtype=float)
+        # Vectorized optimization: compute efficiency for all mechanical powers at once
+        eta_motor = self.motor_efficiency_at_power(p_mech)
 
-        # Driving condition
-        mask_drive = p_mech > 0
-        if np.any(mask_drive):
-            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
-            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
+        # Precompute drive and regen power arrays entirely
+        drive_power = p_mech / (eta_motor * c.drivetrain_efficiency)
+        regen_power = p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
 
-        # Braking with regen condition
-        if c.regen_efficiency > 0:
-            mask_regen = p_mech <= 0
-            if np.any(mask_regen):
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
-                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
-
-        return p_elec
+        # Select corresponding values based on conditions
+        return np.where(
+            p_mech > 0,
+            drive_power,
+            np.where(c.regen_efficiency > 0, regen_power, 0.0)
+        )
     
     def max_braking_decel(self, grade: float = 0.0,
                           traction_fos: float = 0.9) -> float:
