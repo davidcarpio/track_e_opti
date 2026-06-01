@@ -1,3 +1,3 @@
-## 2025-02-20 - [Vectorizing DP Optimization]
-**Learning:** Python loops inside Dynamic Programming backward induction create massive bottlenecks in this specific codebase context. Due to grid evaluation dimensions `O(nodes * V^2)`, standard loop implementations become prohibitively expensive for realistic resolutions (100 nodes x 80 velocity levels).
-**Action:** When working on grid-based calculations in DP optimization loops, always aggressively use vectorized operations via numpy matrix broadcasting to perform evaluation. Filtering calculations directly through numpy index masking yields two orders of magnitude in speedup while maintaining physical correctness.
+## 2025-06-01 - [NumPy Vectorization Optimization]
+**Learning:** Sequential boolean masking in NumPy is a significant performance anti-pattern. Functions evaluated across the entire array (`np.where` or `np.interp`) are inherently faster because they leverage underlying C code directly without the overhead of computing subsets and dynamically allocating matching masks iteratively.
+**Action:** Always prefer `np.interp` over multiple boolean statements for any piece-wise logic scaling. Calculate inputs (like absolute values) beforehand across the entire array.
