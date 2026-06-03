@@ -228,28 +228,28 @@ class VehicleDynamics:
                 # Overload: drops from 90% (should be rare now with power limit)
                 return max(0.65, 0.90 - (load - 1.0) * 0.25)
 
-        # Preallocate output array
-        eff = np.zeros_like(P, dtype=float)
-
-        # Standstill condition
-        mask0 = P < 5
-        eff[mask0] = 0.50
-
-        # Other conditions
         load = P / P_rated
+
+        # Vectorized exact evaluation of the piecewise linear efficiency curve
+        # using np.interp for massive speedup in DP grid evaluation
+        xp = np.array([0.0, 0.15, 0.5, 1.0, 2.0])
+        yp = np.array([0.50, 0.70, 0.87, 0.90, 0.65])
         
-        mask1 = (P >= 5) & (load < 0.15)
-        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
+        # np.interp returns a scalar if P is a scalar (e.g. np.float64),
+        # so we ensure it's an array to support item assignment via np.atleast_1d
+        eff = np.atleast_1d(np.interp(load, xp, yp))
         
-        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
-        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
+        # Override the interpolation for the strict low power standstill jump
+        P_array = np.atleast_1d(P)
+        eff[P_array < 5] = 0.50
 
-        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
-        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
+        # The exact math for the original curve drops linearly until load=2.0 (eff=0.65)
+        # and then stays flat at 0.65. np.interp already clamps load > 2.0 to 0.65,
+        # so we don't need any special mask_overload handling.
 
-        mask4 = (P >= 5) & (load > 1.0)
-        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
-
+        # If the input was originally a 0-d array, return a 0-d array
+        if getattr(P, 'ndim', None) == 0:
+            return np.array(eff.squeeze())
         return eff
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
