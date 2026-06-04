@@ -228,29 +228,13 @@ class VehicleDynamics:
                 # Overload: drops from 90% (should be rare now with power limit)
                 return max(0.65, 0.90 - (load - 1.0) * 0.25)
 
-        # Preallocate output array
-        eff = np.zeros_like(P, dtype=float)
-
-        # Standstill condition
-        mask0 = P < 5
-        eff[mask0] = 0.50
-
-        # Other conditions
+        # Vectorized interpolation for performance
         load = P / P_rated
+        xp = np.array([0.0, 0.15, 0.5, 1.0, 2.0])
+        fp = np.array([0.50, 0.70, 0.87, 0.90, 0.65])
         
-        mask1 = (P >= 5) & (load < 0.15)
-        eff[mask1] = 0.50 + load[mask1] * (0.70 - 0.50) / 0.15
-        
-        mask2 = (P >= 5) & (load >= 0.15) & (load < 0.5)
-        eff[mask2] = 0.70 + (load[mask2] - 0.15) * (0.87 - 0.70) / 0.35
-
-        mask3 = (P >= 5) & (load >= 0.5) & (load <= 1.0)
-        eff[mask3] = 0.87 + (load[mask3] - 0.5) * (0.90 - 0.87) / 0.5
-
-        mask4 = (P >= 5) & (load > 1.0)
-        eff[mask4] = np.maximum(0.65, 0.90 - (load[mask4] - 1.0) * 0.25)
-
-        return eff
+        eff = np.interp(load, xp, fp)
+        return np.where(P < 5, 0.50, eff)
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -340,23 +324,14 @@ class VehicleDynamics:
                 # Braking: no regeneration
                 return 0.0
 
-        # Preallocate output array
-        p_elec = np.zeros_like(p_mech, dtype=float)
+        # Vectorized evaluation for performance
+        eta_motor = self.motor_efficiency_at_power(p_mech)
 
-        # Driving condition
-        mask_drive = p_mech > 0
-        if np.any(mask_drive):
-            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
-            p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
+        drive_elec = p_mech / (eta_motor * c.drivetrain_efficiency)
+        regen_elec = p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
 
-        # Braking with regen condition
-        if c.regen_efficiency > 0:
-            mask_regen = p_mech <= 0
-            if np.any(mask_regen):
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
-                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
-
-        return p_elec
+        return np.where(p_mech > 0, drive_elec,
+               np.where(c.regen_efficiency > 0, regen_elec, 0.0))
     
     def max_braking_decel(self, grade: float = 0.0,
                           traction_fos: float = 0.9) -> float:
@@ -407,23 +382,16 @@ class VehicleDynamics:
             return np.zeros_like(v1)
             
         v_avg = (v1 + v2) / 2
-
-        mask_valid = v_avg > 0
-
-        dt = np.zeros_like(v_avg)
-        dt[mask_valid] = distance / v_avg[mask_valid]
+        accel = np.where(distance > 0, (v2**2 - v1**2) / (2 * distance), 0.0)
         
-        accel = np.zeros_like(v_avg)
-        if distance > 0:
-            accel = (v2**2 - v1**2) / (2 * distance)
+        # Calculate for all points to avoid masking overhead
+        p_elec = self.electrical_power(v_avg, accel, grade)
 
-        p_elec = np.zeros_like(v_avg)
-        if np.any(mask_valid):
-            # We need grade to be aligned
-            grade_valid = grade[mask_valid] if isinstance(grade, np.ndarray) else grade
-            p_elec[mask_valid] = self.electrical_power(v_avg[mask_valid], accel[mask_valid], grade_valid)
+        # Safe divide using np.where
+        dt = np.where(v_avg > 0, distance / np.maximum(v_avg, 1e-6), 0.0)
 
-        return p_elec * dt
+        # Zero out invalid values
+        return np.where(v_avg > 0, p_elec * dt, 0.0)
 
 
 def validate_aero_forces():
