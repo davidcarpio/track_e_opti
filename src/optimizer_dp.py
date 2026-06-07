@@ -39,10 +39,26 @@ class DPOptimizer(BaseOptimizer):
         vehicle: Optional[VehicleDynamics] = None,
         config: Optional[OptimizationConfig] = None,
         *,
-        num_velocity_levels: int = 80,
+        num_velocity_levels: Optional[int] = None,
     ):
         super().__init__(track, vehicle, config)
-        self.num_velocity_levels = num_velocity_levels
+
+        # Dynamically scale velocity levels to keep dv^2/ds reasonable at high N
+        if num_velocity_levels is None:
+            # Base design point: 100 nodes -> 80 levels
+            base_nodes = 100
+            base_levels = 80
+
+            # Since acceleration a = dv^2 / ds, we want to keep dv^2/ds constant
+            # as ds gets smaller. dv is proportional to 1/num_levels.
+            # So, (1/num_levels)^2 / ds = const
+            # num_levels ~ sqrt(1/ds) ~ sqrt(num_nodes)
+            scaled_levels = int(base_levels * np.sqrt(self.config.num_nodes / base_nodes))
+
+            # Cap at 80 minimum, and limit upper bound to prevent O(N * V^2) memory/compute blowup
+            self.num_velocity_levels = min(max(scaled_levels, base_levels), 400)
+        else:
+            self.num_velocity_levels = num_velocity_levels
 
     # ── helpers ─────────────────────────────────────────────────────
 

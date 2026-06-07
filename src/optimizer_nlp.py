@@ -225,7 +225,7 @@ class NLPOptimizer(BaseOptimizer):
         # ── initial guess: feasible from greedy-style heuristic ─────
         # Use robust optimal initial guess to help IPOPT converge
         from .optimizer_dp import DPOptimizer
-        dp = DPOptimizer(self.track, self.vehicle, self.config, num_velocity_levels=80)
+        dp = DPOptimizer(self.track, self.vehicle, self.config)
         res = dp.optimize()
         v0 = res.velocities
 
