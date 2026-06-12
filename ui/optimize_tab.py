@@ -260,13 +260,41 @@ class OptimizeTab(QWidget):
 
         # velocity
         ax = self.ax_vel; ax.clear()
-        ax.plot(r.distances, r.velocities * 3.6, color=ACCENT, linewidth=1.5)
+
+        # velocity on primary axis
+        ax.plot(r.distances, r.velocities * 3.6, color=ACCENT, linewidth=1.5, zorder=3)
         for s in stops:
-            ax.axvline(s, color="#f7768e", ls=":", alpha=0.5)
+            ax.axvline(s, color="#f7768e", ls=":", alpha=0.5, zorder=2)
         ax.set_ylabel("Velocity (km/h)")
         ax.set_xlabel("Distance (m)")
         ax.set_title("Velocity Profile", fontsize=10, fontweight="bold")
         ax.grid(True, alpha=0.3)
+
+        if not hasattr(self, "ax_vel_accel"):
+            self.ax_vel_accel = ax.twinx()
+        else:
+            self.ax_vel_accel.clear()
+        ax_accel2 = self.ax_vel_accel
+
+        # plot acceleration on twin axis
+        accel = r.accelerations
+        force = r.force_traction
+        eps = 1.0  # 1 N threshold
+
+        mask_intent_accel = (accel > 0) & (force > eps)
+        mask_intent_brake = (accel < 0) & (force < -eps)
+        mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
+
+        ax_accel2.fill_between(r.distances, 0, accel, where=mask_intent_accel,
+                               color="green", alpha=0.15, zorder=1)
+        ax_accel2.fill_between(r.distances, 0, accel, where=mask_intent_brake,
+                               color="red", alpha=0.15, zorder=1)
+        ax_accel2.fill_between(r.distances, 0, accel, where=mask_unintent,
+                               color="gray", alpha=0.2, zorder=1)
+        ax_accel2.plot(r.distances, accel, color="#737aa2", linewidth=0.8, alpha=0.5, zorder=1)
+        ax_accel2.set_ylabel("Accel (m/s²)", color=TEXT_DIM)
+        ax_accel2.tick_params(axis='y', colors=TEXT_DIM)
+
         self.pw_vel.draw()
 
         # forces (longitudinal + lateral)

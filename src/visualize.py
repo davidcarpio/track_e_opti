@@ -22,25 +22,58 @@ from .track_analysis import Track
 def plot_velocity_profile(result: OptimizationResult, 
                           stop_distances: list = None,
                           save_path: str = None):
-    """Plot velocity vs distance."""
+    """Plot velocity vs distance with acceleration overlay."""
     fig, ax = plt.subplots(figsize=(14, 5))
     
-    ax.plot(result.distances, result.velocities * 3.6, 'b-', linewidth=2, label='Velocity')
-    ax.axhline(40, color='r', linestyle='--', alpha=0.5, label='Max (40 km/h)')
-    ax.axhline(25, color='g', linestyle='--', alpha=0.5, label='Min avg (25 km/h)')
+    # Velocity on primary axis
+    line_vel, = ax.plot(result.distances, result.velocities * 3.6, 'b-', linewidth=2, label='Velocity', zorder=3)
+    line_max = ax.axhline(40, color='r', linestyle='--', alpha=0.5, label='Max (40 km/h)')
+    line_min = ax.axhline(25, color='g', linestyle='--', alpha=0.5, label='Min avg (25 km/h)')
+
+    lines = [line_vel, line_max, line_min]
+    labels = [l.get_label() for l in lines]
     
     if stop_distances:
         for i, sd in enumerate(stop_distances):
-            ax.axvline(sd, color='orange', linestyle=':', alpha=0.8, 
-                       label=f'Stop {i+1}' if i == 0 else '')
+            line_stop = ax.axvline(sd, color='orange', linestyle=':', alpha=0.8,
+                                   label=f'Stop {i+1}' if i == 0 else '', zorder=2)
+            if i == 0:
+                lines.append(line_stop)
+                labels.append(line_stop.get_label())
     
     ax.set_xlabel('Distance (m)', fontsize=12)
     ax.set_ylabel('Velocity (km/h)', fontsize=12)
     ax.set_title('Optimized Velocity Profile', fontsize=14)
-    ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, result.distances[-1])
     ax.set_ylim(0, 45)
+
+    # Acceleration on secondary axis
+    ax_accel = ax.twinx()
+
+    accel = result.accelerations
+    force = result.force_traction
+    eps = 1.0
+
+    mask_intent_accel = (accel > 0) & (force > eps)
+    mask_intent_brake = (accel < 0) & (force < -eps)
+    mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
+
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_intent_accel,
+                          color="green", alpha=0.15, zorder=1)
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_intent_brake,
+                          color="red", alpha=0.15, zorder=1)
+    ax_accel.fill_between(result.distances, 0, accel, where=mask_unintent,
+                          color="gray", alpha=0.2, zorder=1)
+    line_accel, = ax_accel.plot(result.distances, accel, color="gray", linewidth=1.0, alpha=0.6,
+                                label='Acceleration', zorder=1)
+    ax_accel.set_ylabel('Acceleration (m/s²)', fontsize=12, color="gray")
+    ax_accel.tick_params(axis='y', colors="gray")
+
+    # Combine legends
+    lines.append(line_accel)
+    labels.append(line_accel.get_label())
+    ax.legend(lines, labels, loc='upper right')
     
     plt.tight_layout()
     if save_path:
@@ -324,15 +357,35 @@ def generate_summary_figure(track: Track, result: OptimizationResult,
     
     # Velocity profile (top middle)
     ax2 = fig.add_subplot(2, 3, 2)
-    ax2.plot(result.distances, result.velocities * 3.6, 'b-', linewidth=1.5)
+    ax2.plot(result.distances, result.velocities * 3.6, 'b-', linewidth=1.5, zorder=3)
     if stop_distances:
         for sd in stop_distances:
-            ax2.axvline(sd, color='r', linestyle=':', alpha=0.7)
+            ax2.axvline(sd, color='r', linestyle=':', alpha=0.7, zorder=2)
     ax2.set_xlabel('Distance (m)')
     ax2.set_ylabel('Velocity (km/h)')
     ax2.set_title('Velocity Profile')
     ax2.grid(True, alpha=0.3)
     
+    ax_accel_summary = ax2.twinx()
+
+    accel = result.accelerations
+    force = result.force_traction
+    eps = 1.0
+
+    mask_intent_accel = (accel > 0) & (force > eps)
+    mask_intent_brake = (accel < 0) & (force < -eps)
+    mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
+
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_intent_accel,
+                                  color="green", alpha=0.15, zorder=1)
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_intent_brake,
+                                  color="red", alpha=0.15, zorder=1)
+    ax_accel_summary.fill_between(result.distances, 0, accel, where=mask_unintent,
+                                  color="gray", alpha=0.2, zorder=1)
+    ax_accel_summary.plot(result.distances, accel, color="gray", linewidth=0.8, alpha=0.5, zorder=1)
+    ax_accel_summary.set_ylabel('Accel (m/s²)', fontsize=10, color="gray")
+    ax_accel_summary.tick_params(axis='y', colors="gray")
+
     # Energy profile (top right)
     ax3 = fig.add_subplot(2, 3, 3)
     ax3.plot(result.distances, result.energy_cumulative / 3600, 'g-', linewidth=1.5)
