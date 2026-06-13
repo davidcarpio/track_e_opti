@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QSpinBox, QLineEdit, QPushButton, QGroupBox, QFormLayout,
     QSplitter, QTabWidget, QGridLayout, QFileDialog, QMessageBox,
+    QTextEdit,
 )
 from PyQt6.QtCore import Qt
 
@@ -20,6 +21,8 @@ from src.track_analysis import Track
 from ui.theme import ACCENT, TEXT_DIM, SUCCESS, WARNING, ERROR, apply_mpl_theme
 from ui.workers import OptimizationWorker
 from ui.plot_widget import PlotWidget
+from src.pilot_reference import PilotReferenceGenerator, PilotConfig
+from matplotlib.patches import Patch
 
 
 class OptimizeTab(QWidget):
@@ -164,12 +167,29 @@ class OptimizeTab(QWidget):
         side_lay.addStretch()
         lay_losses.addWidget(side_panel, stretch=3)
 
+        # Pilot Reference Tab
+        self.tab_pilot = QWidget()
+        lay_pilot = QHBoxLayout(self.tab_pilot)
+        lay_pilot.setContentsMargins(0, 0, 0, 0)
+        
+        self.pw_pilot = PlotWidget(figsize=(7, 6))
+        self.ax_pilot_v = self.pw_pilot.add_subplot(311)
+        self.ax_pilot_c = self.pw_pilot.add_subplot(312, sharex=self.ax_pilot_v)
+        self.ax_pilot_z = self.pw_pilot.add_subplot(313, sharex=self.ax_pilot_v)
+        lay_pilot.addWidget(self.pw_pilot, stretch=7)
+        
+        self.txt_pilot_guide = QTextEdit()
+        self.txt_pilot_guide.setReadOnly(True)
+        self.txt_pilot_guide.setStyleSheet(f"font-family: monospace; color: {TEXT_DIM};")
+        lay_pilot.addWidget(self.txt_pilot_guide, stretch=3)
+
         self.plot_tabs.addTab(self.pw_vel,   "Velocity")
         self.plot_tabs.addTab(self.pw_force, "Forces")
         self.plot_tabs.addTab(self.pw_energy,"Cumulative Energy")
         self.plot_tabs.addTab(self.tab_losses, "Energy Losses")
         self.plot_tabs.addTab(self.pw_accel, "Acceleration")
         self.plot_tabs.addTab(self.pw_map,   "Map")
+        self.plot_tabs.addTab(self.tab_pilot,"Pilot Ref")
 
         splitter.addWidget(self.plot_tabs)
         splitter.setStretchFactor(0, 3)
@@ -180,11 +200,11 @@ class OptimizeTab(QWidget):
 
     def _run(self):
         if not self.state.track:
-            self.lbl_status.setText("⚠ Load a track first (Track tab).")
+            self.lbl_status.setText("Load a track first (Track tab).")
             self.lbl_status.setStyleSheet(f"color: {WARNING};")
             return
         if not self.state.vehicle:
-            self.lbl_status.setText("⚠ Configure vehicle first.")
+            self.lbl_status.setText("Configure vehicle first.")
             self.lbl_status.setStyleSheet(f"color: {WARNING};")
             return
 
@@ -194,7 +214,7 @@ class OptimizeTab(QWidget):
             try:
                 stop_distances = [float(x) for x in stops_text.split(",")]
             except ValueError:
-                self.lbl_status.setText("⚠ Invalid stops format.")
+                self.lbl_status.setText("Invalid stops format.")
                 self.lbl_status.setStyleSheet(f"color: {ERROR};")
                 return
         else:
@@ -208,9 +228,9 @@ class OptimizeTab(QWidget):
         method = self.combo_method.currentData()
 
         self.btn_run.setEnabled(False)
-        self.lbl_status.setText("⏳ Optimising…")
+        self.lbl_status.setText("Optimising…")
         self.lbl_status.setStyleSheet(f"color: {ACCENT};")
-        self.state.set_status("⏳ Optimising…")
+        self.state.set_status("Optimising…")
 
         self._worker = OptimizationWorker(
             self.state.track, self.state.vehicle, config, method
@@ -421,6 +441,74 @@ class OptimizeTab(QWidget):
         ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
         ax.set_title("Track: Velocity Heatmap", fontsize=10, fontweight="bold")
         self.pw_map.draw()
+
+        # --- Pilot Reference ---
+        pilot_gen = PilotReferenceGenerator(track, self.state.vehicle, PilotConfig())
+        pilot_res = pilot_gen.generate(r)
+        
+        d_p = pilot_res.distances
+        v_p_kmh = pilot_res.velocities * 3.6
+        ctrl_p = pilot_res.control_inputs * 100.0
+        zones_p = pilot_res.action_zones
+        
+        # 1. Velocity Trace
+        ax = self.ax_pilot_v; ax.clear()
+        ax.plot(d_p, v_p_kmh, color=ACCENT, linewidth=2, label="Target Speed (km/h)")
+        ax.set_ylabel("Speed (km/h)")
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_title("Pilot Reference Telemetry Dashboard", fontsize=10, fontweight='bold')
+        
+        # 2. Control Inputs
+        ax = self.ax_pilot_c; ax.clear()
+        ax.plot(d_p, ctrl_p, color=TEXT_DIM, linewidth=1.5)
+        ax.fill_between(d_p, 0, ctrl_p, where=(ctrl_p > 0), color='#9ece6a', alpha=0.5, label="Throttle %")
+        ax.fill_between(d_p, 0, ctrl_p, where=(ctrl_p < 0), color='#f7768e', alpha=0.5, label="Brake %")
+        ax.set_ylabel("Pedal Input (%)")
+        ax.set_ylim(-110, 110)
+        ax.axhline(0, color="#737aa2", linewidth=1)
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # 3. Action Zones
+        ax = self.ax_pilot_z; ax.clear()
+        color_map = {
+            'ACCELERATE': '#9ece6a',
+            'BRAKE': '#f7768e',
+            'COAST': '#7aa2f7',
+            'HOLD': '#e0af68'
+        }
+        for i in range(len(d_p) - 1):
+            c = color_map.get(zones_p[i], 'gray')
+            ax.axvspan(d_p[i], d_p[i+1], color=c, alpha=0.5, lw=0)
+        ax.set_yticks([])
+        ax.set_ylabel("Action")
+        ax.set_xlabel("Track Distance (m)")
+        legend_elements = [Patch(facecolor=color_map[k], alpha=0.5, label=k) for k in color_map]
+        ax.legend(handles=legend_elements, loc='upper right', ncol=4, fontsize=8)
+        
+        self.pw_pilot.draw()
+        
+        # Pilot Guide Text
+        lines = ["--- PILOT DRIVING GUIDE ---", ""]
+        lines.append(f"Lap Time: {pilot_res.total_time:.1f} s")
+        lines.append(f"Energy:   {pilot_res.total_energy/3600:.2f} Wh")
+        lines.append("-" * 30)
+        
+        current_zone = zones_p[0]
+        start_dist = d_p[0]
+        
+        for i in range(1, len(d_p)):
+            if zones_p[i] != current_zone:
+                end_dist = d_p[i]
+                speed_at_transition = v_p_kmh[i]
+                lines.append(f"[{start_dist:6.1f}m -> {end_dist:6.1f}m] : {current_zone:10s} (End speed: {speed_at_transition:4.1f} km/h)")
+                current_zone = zones_p[i]
+                start_dist = d_p[i]
+                
+        lines.append(f"[{start_dist:6.1f}m -> {d_p[-1]:6.1f}m] : {current_zone:10s} (End speed: {v_p_kmh[-1]:4.1f} km/h)")
+        
+        self.txt_pilot_guide.setText("\n".join(lines))
 
     #    redraw for theme switch    
 
