@@ -265,11 +265,11 @@ class Track:
         in_corner = abs(self.points[0].curvature) > curvature_threshold
         segment_start = 0
         
-        for i, p in enumerate(self.points):
-            is_corner = abs(p.curvature) > curvature_threshold
+        for i in range(1, len(self.points)):
+            is_corner = abs(self.points[i].curvature) > curvature_threshold
             
-            if is_corner != in_corner or i == len(self.points) - 1:
-                # End current segment
+            if is_corner != in_corner:
+                # Type transition — close the current segment (up to but not including i)
                 segment_points = self.points[segment_start:i]
                 if segment_points:
                     avg_curv = np.mean([abs(sp.curvature) for sp in segment_points])
@@ -278,7 +278,7 @@ class Track:
                     
                     segment = TrackSegment(
                         start_distance=self.points[segment_start].distance,
-                        end_distance=self.points[i-1].distance if i > 0 else self.points[0].distance,
+                        end_distance=self.points[i - 1].distance,
                         segment_type='corner' if in_corner else 'straight',
                         avg_curvature=avg_curv,
                         avg_grade=avg_grade,
@@ -288,6 +288,23 @@ class Track:
                 
                 segment_start = i
                 in_corner = is_corner
+        
+        # Finalize the last segment (includes the last point)
+        segment_points = self.points[segment_start:]
+        if segment_points:
+            avg_curv = np.mean([abs(sp.curvature) for sp in segment_points])
+            avg_grade = np.mean([sp.grade for sp in segment_points])
+            min_radius = 1.0 / max(avg_curv, 0.001)
+            
+            segment = TrackSegment(
+                start_distance=self.points[segment_start].distance,
+                end_distance=self.points[-1].distance,
+                segment_type='corner' if in_corner else 'straight',
+                avg_curvature=avg_curv,
+                avg_grade=avg_grade,
+                min_radius=min_radius
+            )
+            self.segments.append(segment)
         
         print(f"Identified {len(self.segments)} segments: "
               f"{sum(1 for s in self.segments if s.segment_type == 'straight')} straights, "
