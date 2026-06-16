@@ -234,19 +234,39 @@ class BaseOptimizer(ABC):
         return self._enforce_stops(v)
 
     def _backward_pass(self, v_initial: np.ndarray) -> np.ndarray:
-        """Backward integration: limit deceleration to braking capacity."""
+        """Backward integration: limit deceleration to braking capacity.
+
+        For each node *i* (going backwards), compute the max v[i] such that
+        we can brake from v[i] down to v[i+1] within one segment.
+
+        Forces are evaluated at v[i] (the higher, pre-braking velocity) for
+        accuracy: drag and rolling resistance assist braking and are larger
+        at higher speed.  Since v[i] is the unknown, we use the current
+        upper-bound value and refine once after clamping.
+        """
         v = v_initial.copy()
         c = self.vehicle.config
 
         for i in range(len(v) - 2, -1, -1):
             grade = (self.grades[i] + self.grades[i+1]) / 2.0
 
-            f_brake = self.vehicle.max_traction_force(v[i + 1], grade)
-            f_resist = self.vehicle.total_resistance_force(v[i + 1], grade)
+            # Evaluate braking budget at current v[i] (upper bound)
+            v_eval = v[i]
+            f_brake = self.vehicle.max_traction_force(v_eval, grade)
+            f_resist = self.vehicle.total_resistance_force(v_eval, grade)
             a_brake = (f_brake * self.config.traction_fos + f_resist) / c.mass
 
             v_max_brake = np.sqrt(max(v[i + 1] ** 2 + 2 * a_brake * self.ds, 0))
             v[i] = min(v[i], v_max_brake)
+
+            # Refine once: re-evaluate forces at the (now clamped) v[i]
+            if v[i] < v_eval:
+                v_eval = v[i]
+                f_brake = self.vehicle.max_traction_force(v_eval, grade)
+                f_resist = self.vehicle.total_resistance_force(v_eval, grade)
+                a_brake = (f_brake * self.config.traction_fos + f_resist) / c.mass
+                v_max_brake = np.sqrt(max(v[i + 1] ** 2 + 2 * a_brake * self.ds, 0))
+                v[i] = min(v[i], v_max_brake)
 
         return self._enforce_stops(v)
 
@@ -271,6 +291,9 @@ class BaseOptimizer(ABC):
         stop_adj = ~normal & ((v1 > 1e-6) | (v2 > 1e-6))
         v_nonzero = np.maximum(v1, v2)
         dt[stop_adj] = 2.0 * self.ds / v_nonzero[stop_adj]
+        
+        impossible = ~normal & ~stop_adj
+        dt[impossible] = float('inf')
 
         return float(np.sum(dt))
 
