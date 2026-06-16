@@ -22,6 +22,7 @@ import csv
 from pathlib import Path
 from dataclasses import asdict
 from typing import List, Optional
+import numpy as np
 
 # Local imports
 from src.vehicle_model import VehicleConfig, VehicleDynamics
@@ -38,6 +39,8 @@ from src.visualize import (
     plot_velocity_profile,
     plot_force_breakdown
 )
+from src.pilot_reference import PilotConfig, PilotReferenceGenerator
+from src.pilot_telemetry_plot import plot_telemetry_dashboard, generate_corner_guide
 
 
 def parse_args():
@@ -87,10 +90,22 @@ Examples:
     
     # Optimization parameters
     parser.add_argument('--nodes', type=int, default=500,
-                        help='Number of discretization nodes (default: 200)')
+                        help='Number of discretization nodes (default: 500)')
     parser.add_argument('--method', type=str, default='nlp',
                         choices=['nlp', 'dp'],
                         help='Optimization method (default: nlp)')
+                        
+    # Pilot Reference
+    parser.add_argument('--pilot', action='store_true', default=False,
+                        help='Generate human-followable pilot reference data')
+    parser.add_argument('--pilot-max-accel', type=float, default=1.5,
+                        help='Max pilot acceleration in m/s^2 (default: 1.5)')
+    parser.add_argument('--pilot-max-brake', type=float, default=-2.0,
+                        help='Max pilot braking in m/s^2 (default: -2.0)')
+    parser.add_argument('--pilot-pedal-time', type=float, default=0.5,
+                        help='Pedal transition time in seconds (default: 0.5)')
+    parser.add_argument('--pilot-deadband', type=float, default=0.0,
+                        help='Traction force deadband in N for coasting (default: 0.0)')
     
     return parser.parse_args()
 
@@ -148,12 +163,24 @@ def run_optimization(args) -> OptimizationResult:
     optimizer = TrajectoryOptimizer(track, vehicle, opt_config)
     result = optimizer.optimize(method=args.method)
     
-    return track, result, stop_distances
+    pilot_result = None
+    if args.pilot:
+        print("\n[4b] Generating Pilot Reference Profile...")
+        pilot_cfg = PilotConfig(
+            max_accel=args.pilot_max_accel,
+            max_brake=args.pilot_max_brake,
+            pedal_transition_time_s=args.pilot_pedal_time,
+            force_deadband_N=args.pilot_deadband
+        )
+        pilot_gen = PilotReferenceGenerator(track, vehicle, pilot_cfg)
+        pilot_result = pilot_gen.generate(result)
+    
+    return track, vehicle, result, pilot_result, stop_distances
 
 
-from src.export import export_optimization_results
+from src.export import export_optimization_results, export_pilot_results
 
-def export_results(track: Track, result: OptimizationResult, 
+def export_results(track: Track, vehicle: VehicleDynamics, result: OptimizationResult, pilot_result,
                    stop_distances: List[float], args):
     """Export results to files."""
     
@@ -180,6 +207,14 @@ def export_results(track: Track, result: OptimizationResult,
             plot_all(track, result, stop_distances, str(output_dir))
             generate_summary_figure(track, result, stop_distances,
                                    str(output_dir / 'summary.png'))
+                                   
+            if pilot_result:
+                print("  Generating Pilot Telemetry Dashboard...")
+                plot_telemetry_dashboard(pilot_result, str(output_dir))
+                generate_corner_guide(pilot_result, str(output_dir))
+                export_pilot_results(pilot_result, output_dir)
+                print(f"  Saved Pilot CSV: {output_dir / 'pilot_reference.csv'}")
+                print(f"  Saved Pilot Guide: {output_dir / 'pilot_guide.txt'}")
         except Exception as e:
             print(f"  Warning: Could not generate plots: {e}")
 
@@ -190,19 +225,28 @@ def main():
     
     try:
         # Run optimization
-        track, result, stop_distances = run_optimization(args)
+        track, vehicle, result, pilot_result, stop_distances = run_optimization(args)
         
         # Export results
-        export_results(track, result, stop_distances, args)
+        export_results(track, vehicle, result, pilot_result, stop_distances, args)
         
         # Print final summary
         print("\n" + "=" * 60)
         print("OPTIMIZATION COMPLETE")
         print("=" * 60)
+        print("--- RAW OPTIMAL LIMITS ---")
         print(f"  Energy per lap: {result.total_energy/3600:.4f} Wh")
         print(f"  Lap time: {result.total_time:.1f} s")
         print(f"  Peak power: {result.peak_power:.0f} W")
         print(f"  Peak force: {result.peak_force:.0f} N")
+        
+        if pilot_result:
+            print("\n--- PILOT REFERENCE ---")
+            print(f"  Energy per lap: {pilot_result.total_energy/3600:.4f} Wh")
+            print(f"  Lap time: {pilot_result.total_time:.1f} s")
+            print(f"  Max Accel: {np.max(pilot_result.accelerations):.2f} m/s^2")
+            print(f"  Max Decel: {np.min(pilot_result.accelerations):.2f} m/s^2")
+            
         print(f"\nResults saved to: {args.output}")
         
     except Exception as e:
