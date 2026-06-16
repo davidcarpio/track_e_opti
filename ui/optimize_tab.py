@@ -112,11 +112,13 @@ class OptimizeTab(QWidget):
         
         def _toggle_adv():
             is_nlp = self.combo_method.currentData() == "nlp"
-            self.edit_tol.setEnabled(is_nlp)
-            self.edit_acc_tol.setEnabled(is_nlp)
-            self.edit_acc_obj.setEnabled(is_nlp)
-            self.spin_acc_iter.setEnabled(is_nlp)
-            self.edit_jerk.setEnabled(is_nlp)
+            for row in range(5):  # First 5 rows are NLP-specific
+                label_item = adv_form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                field_item = adv_form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+                if label_item and label_item.widget():
+                    label_item.widget().setEnabled(is_nlp)
+                if field_item and field_item.widget():
+                    field_item.widget().setEnabled(is_nlp)
             
         self.combo_method.currentIndexChanged.connect(_toggle_adv)
         _toggle_adv()
@@ -155,6 +157,12 @@ class OptimizeTab(QWidget):
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self._export)
         left_lay.addWidget(self.btn_export)
+
+        # save as default button
+        self.btn_save_default = QPushButton("Save as Track Default")
+        self.btn_save_default.setEnabled(False)
+        self.btn_save_default.clicked.connect(self._save_as_default)
+        left_lay.addWidget(self.btn_save_default)
 
         left_lay.addStretch()
         splitter.addWidget(left)
@@ -290,19 +298,9 @@ class OptimizeTab(QWidget):
         self._track_for_result = track
         self.state.last_result = result
         
-        # Auto-save track-specific result history
-        if track and getattr(track, 'csv_path', None):
-            try:
-                save_dir = Path("results") / "history"
-                save_dir.mkdir(parents=True, exist_ok=True)
-                save_path = save_dir / f"result_{track.csv_path.stem}.json"
-                with open(save_path, "w") as f:
-                    json.dump(result.to_dict(), f)
-            except Exception as e:
-                print(f"Failed to auto-save track result: {e}")
-
         self.btn_run.setEnabled(True)
         self.btn_export.setEnabled(True)
+        self.btn_save_default.setEnabled(True)
 
         # km/kWh
         track_km = track.total_distance / 1000
@@ -526,3 +524,20 @@ class OptimizeTab(QWidget):
             self, "Export Complete",
             f"Saved:\n  > {csv_path}\n  > {json_path}",
         )
+
+    def _save_as_default(self):
+        track = self._track_for_result
+        if not track or not getattr(track, 'csv_path', None) or not self._result:
+            return
+        try:
+            save_dir = Path("results") / "history"
+            save_dir.mkdir(parents=True, exist_ok=True)
+            save_path = save_dir / f"result_{track.csv_path.stem}.json"
+            with open(save_path, "w") as f:
+                json.dump(self._result.to_dict(), f)
+            QMessageBox.information(
+                self, "Saved",
+                f"Successfully set this simulation as the default for track '{track.csv_path.stem}'."
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save track result: {e}")
