@@ -41,7 +41,7 @@ class RaceTab(QWidget):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 8, 0)
 
-        self.pw_map = PlotWidget(figsize=(4, 3))
+        self.pw_map = PlotWidget(figsize=(4, 3), toolbar=False)
         left_lay.addWidget(self.pw_map)
 
         cfg_box = QGroupBox("Pilot Constraints")
@@ -148,11 +148,18 @@ class RaceTab(QWidget):
             v_interp = interp1d(result.distances, result.velocities * 3.6,
                                 bounds_error=False, fill_value="extrapolate")(d_pts)
             sc = ax_m.scatter(xs, ys, c=v_interp, cmap="plasma", s=4)
+            # Add horizontal colorbar without text labels
+            cb = self.pw_map.figure.colorbar(sc, ax=ax_m, orientation='horizontal', pad=0.02)
+            cb.set_label('')
         else:
             ax_m.scatter(xs, ys, color=TEXT_DIM, s=4)
 
         ax_m.set_aspect("equal")
-        ax_m.axis("off")
+        ax_m.axis("on")
+        ax_m.tick_params(labelbottom=False, labelleft=False)
+        ax_m.grid(False)
+        ax_m.set_facecolor('none')
+        self.pw_map.figure.patch.set_alpha(0.0)
         self.pw_map.figure.tight_layout(pad=0)
         self.pw_map.draw()
 

@@ -80,6 +80,47 @@ class OptimizeTab(QWidget):
 
         left_lay.addWidget(cfg_box)
 
+        adv_box = QGroupBox("Advanced Settings")
+        adv_form = QFormLayout(adv_box)
+        adv_form.setHorizontalSpacing(16)
+        adv_form.setVerticalSpacing(10)
+
+        self.edit_tol = QLineEdit("1e-6")
+        adv_form.addRow("Tolerance:", self.edit_tol)
+
+        self.edit_acc_tol = QLineEdit("10.0")
+        adv_form.addRow("Acc. Tolerance:", self.edit_acc_tol)
+
+        self.edit_acc_obj = QLineEdit("1e-1")
+        adv_form.addRow("Acc. Obj Change:", self.edit_acc_obj)
+
+        self.spin_acc_iter = QSpinBox()
+        self.spin_acc_iter.setRange(1, 100)
+        self.spin_acc_iter.setValue(10)
+        adv_form.addRow("Acc. Iterations:", self.spin_acc_iter)
+
+        self.edit_jerk = QLineEdit("1e-2")
+        adv_form.addRow("Jerk Penalty Wt:", self.edit_jerk)
+
+        self.spin_fos = QSpinBox()
+        self.spin_fos.setRange(10, 100)
+        self.spin_fos.setValue(90)
+        self.spin_fos.setSuffix("%")
+        adv_form.addRow("Traction FoS:", self.spin_fos)
+
+        left_lay.addWidget(adv_box)
+        
+        def _toggle_adv():
+            is_nlp = self.combo_method.currentData() == "nlp"
+            self.edit_tol.setEnabled(is_nlp)
+            self.edit_acc_tol.setEnabled(is_nlp)
+            self.edit_acc_obj.setEnabled(is_nlp)
+            self.spin_acc_iter.setEnabled(is_nlp)
+            self.edit_jerk.setEnabled(is_nlp)
+            
+        self.combo_method.currentIndexChanged.connect(_toggle_adv)
+        _toggle_adv()
+
         # run button
         self.btn_run = QPushButton("Run Optimisation")
         self.btn_run.setMinimumHeight(42)
@@ -202,10 +243,27 @@ class OptimizeTab(QWidget):
         else:
             stop_distances = list(self.state.stop_distances)
 
+        # parse advanced
+        try:
+            tol = float(self.edit_tol.text())
+            acc_tol = float(self.edit_acc_tol.text())
+            acc_obj = float(self.edit_acc_obj.text())
+            jerk_wt = float(self.edit_jerk.text())
+        except ValueError:
+            self.lbl_status.setText("Invalid advanced parameter format.")
+            self.lbl_status.setStyleSheet(f"color: {ERROR};")
+            return
+
         config = OptimizationConfig(
             num_nodes=self.spin_nodes.value(),
             stop_distances=stop_distances,
             max_iterations=self.spin_iters.value(),
+            tol=tol,
+            acceptable_tol=acc_tol,
+            acceptable_obj_change_tol=acc_obj,
+            acceptable_iter=self.spin_acc_iter.value(),
+            jerk_penalty_weight=jerk_wt,
+            traction_fos=self.spin_fos.value() / 100.0
         )
         method = self.combo_method.currentData()
 
@@ -222,9 +280,27 @@ class OptimizeTab(QWidget):
         self._worker.start()
 
     def _on_finished(self, track: Track, result: OptimizationResult):
+        try:
+            # Check if widget was deleted while worker was running
+            self._summary["Energy"].text()
+        except RuntimeError:
+            return
+
         self._result = result
         self._track_for_result = track
         self.state.last_result = result
+        
+        # Auto-save track-specific result history
+        if track and getattr(track, 'csv_path', None):
+            try:
+                save_dir = Path("results") / "history"
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_path = save_dir / f"result_{track.csv_path.stem}.json"
+                with open(save_path, "w") as f:
+                    json.dump(result.to_dict(), f)
+            except Exception as e:
+                print(f"Failed to auto-save track result: {e}")
+
         self.btn_run.setEnabled(True)
         self.btn_export.setEnabled(True)
 

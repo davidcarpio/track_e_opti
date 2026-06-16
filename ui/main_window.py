@@ -61,16 +61,6 @@ class MainWindow(QMainWindow):
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._on_tab_changed(self.tabs.currentIndex())
-        
-        # Load last results on startup
-        res_file = Path("results/optimization_results.json")
-        if res_file.exists():
-            try:
-                with open(res_file, "r") as f:
-                    data = json.load(f)
-                self.state.last_result = OptimizationResult.from_dict(data)
-            except Exception as e:
-                print(f"Failed to load last results: {e}")
 
     def _on_tab_changed(self, index):
         tab_name = self.tabs.tabText(index)

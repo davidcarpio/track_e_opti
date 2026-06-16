@@ -36,11 +36,10 @@ class PlotWidget(QWidget):
         pw.draw()
     """
 
-    def __init__(self, figsize=(7, 4), parent=None):
+    def __init__(self, figsize=(7, 4), toolbar: bool = True, parent=None):
         super().__init__(parent)
         self.figure = Figure(figsize=figsize, constrained_layout=True)
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, self)
         self._grid_on = True
 
         layout = QVBoxLayout(self)
@@ -50,37 +49,44 @@ class PlotWidget(QWidget):
         # canvas first, toolbar + options at bottom
         layout.addWidget(self.canvas, stretch=1)
 
-        #  bottom bar: toolbar + figure options 
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 2, 0, 2)
-        bottom.setSpacing(8)
+        if toolbar:
+            self.toolbar = NavigationToolbar(self.canvas, self)
+            
+            #  bottom bar: toolbar + figure options 
+            bottom = QHBoxLayout()
+            bottom.setContentsMargins(0, 2, 0, 2)
+            bottom.setSpacing(8)
 
-        bottom.addWidget(self.toolbar)
+            bottom.addWidget(self.toolbar)
 
-        # separator
-        sep = QLabel("|")
-        sep.setStyleSheet(f"color: {BORDER}; padding: 0 4px;")
-        bottom.addWidget(sep)
+            # separator
+            sep = QLabel("|")
+            sep.setStyleSheet(f"color: {BORDER}; padding: 0 4px;")
+            bottom.addWidget(sep)
 
-        # background colour
-        lbl_bg = QLabel("BG:")
-        lbl_bg.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
-        bottom.addWidget(lbl_bg)
-        self.combo_bg = QComboBox()
-        self.combo_bg.setFixedWidth(100)
-        for name in _BG_PRESETS:
-            self.combo_bg.addItem(name)
-        self.combo_bg.currentTextChanged.connect(self._on_bg_changed)
-        bottom.addWidget(self.combo_bg)
+            # background colour
+            lbl_bg = QLabel("BG:")
+            lbl_bg.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+            bottom.addWidget(lbl_bg)
+            self.combo_bg = QComboBox()
+            self.combo_bg.setFixedWidth(100)
+            for name in _BG_PRESETS:
+                self.combo_bg.addItem(name)
+            self.combo_bg.currentTextChanged.connect(self._on_bg_changed)
+            bottom.addWidget(self.combo_bg)
 
-        # grid toggle
-        self.chk_grid = QCheckBox("Grid")
-        self.chk_grid.setChecked(True)
-        self.chk_grid.toggled.connect(self._on_grid_toggled)
-        bottom.addWidget(self.chk_grid)
+            # grid toggle
+            self.chk_grid = QCheckBox("Grid")
+            self.chk_grid.setChecked(True)
+            self.chk_grid.toggled.connect(self._on_grid_toggled)
+            bottom.addWidget(self.chk_grid)
 
-        bottom.addStretch()
-        layout.addLayout(bottom)
+            bottom.addStretch()
+            layout.addLayout(bottom)
+        else:
+            self.toolbar = None
+            self.chk_grid = None
+            self.combo_bg = None
 
     #  public API 
 

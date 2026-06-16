@@ -132,6 +132,21 @@ class TrackTab(QWidget):
             track.get_worst_case_stop_location(),
             track.total_distance,
         ]
+        
+        # Auto-load previous result if exists
+        try:
+            import json
+            from src.optimizer_base import OptimizationResult
+            save_path = Path("results") / "history" / f"result_{track.csv_path.stem}.json"
+            if save_path.exists():
+                with open(save_path, "r") as f:
+                    data = json.load(f)
+                self.state.last_result = OptimizationResult.from_dict(data)
+            else:
+                self.state.last_result = None
+        except Exception as e:
+            print(f"Failed to load track result history: {e}")
+            self.state.last_result = None
 
         # update info labels
         elev = [p.elevation for p in track.points]
