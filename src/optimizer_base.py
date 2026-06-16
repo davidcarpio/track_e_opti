@@ -179,6 +179,8 @@ class BaseOptimizer(ABC):
 
         for i, (r, g) in enumerate(zip(self.radii, self.grades)):
             v_corner = self.vehicle.max_cornering_velocity(r, g)
+            # v_max ∝ √(μ·g·R), so a force-level FoS on μ translates to
+            # √FoS on velocity.  E.g. FoS=0.9 → v_limit = 0.949·v_corner.
             self.v_max[i] = min(
                 v_corner * np.sqrt(self.config.traction_fos),
                 self.config.max_velocity,
