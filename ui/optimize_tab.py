@@ -152,17 +152,20 @@ class OptimizeTab(QWidget):
             self._summary[name] = lbl_val
         left_lay.addWidget(summary_box)
 
-        # export button
+        # export and save buttons
+        btn_lay = QHBoxLayout()
+        
         self.btn_export = QPushButton("Export Results…")
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self._export)
-        left_lay.addWidget(self.btn_export)
+        btn_lay.addWidget(self.btn_export)
 
-        # save as default button
-        self.btn_save_default = QPushButton("Save as Track Default")
+        self.btn_save_default = QPushButton("Save")
         self.btn_save_default.setEnabled(False)
         self.btn_save_default.clicked.connect(self._save_as_default)
-        left_lay.addWidget(self.btn_save_default)
+        btn_lay.addWidget(self.btn_save_default)
+        
+        left_lay.addLayout(btn_lay)
 
         left_lay.addStretch()
         splitter.addWidget(left)
