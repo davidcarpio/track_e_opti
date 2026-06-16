@@ -104,7 +104,7 @@ class TrajectoryOptimizer:
     @property
     def ds(self) -> float:
         """Segment length (for backward compatibility with convergence code)."""
-        return self._get_dp().ds
+        return self.track.total_distance / self.config.num_nodes
 
     def optimize(self, method: str = "nlp") -> OptimizationResult:
         """
