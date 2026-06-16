@@ -200,11 +200,15 @@ class TestPowertrainAndDynamics:
         mu = default_vehicle.config.mu_tire
         g = default_vehicle.config.gravity
 
-        # Default FOS = 0.9
+        # Default FOS = 0.9, flat road (grade=0 → cos(θ)=1)
         assert default_vehicle.max_braking_decel() == pytest.approx(mu * g * 0.9)
 
         # Custom FOS = 1.0
         assert default_vehicle.max_braking_decel(traction_fos=1.0) == pytest.approx(mu * g)
+
+        # On a grade: cos(arctan(0.1)) reduces normal force
+        cos_theta = np.cos(np.arctan(0.1))
+        assert default_vehicle.max_braking_decel(grade=0.1) == pytest.approx(mu * g * cos_theta * 0.9)
 
     def test_energy_for_segment(self, custom_vehicle):
         # Edge cases

@@ -321,8 +321,9 @@ class VehicleDynamics:
                 return p_mech / (eta_motor * c.drivetrain_efficiency)
             elif c.regen_efficiency > 0:
                 # Braking with regen: return negative power (energy recovered)
-                eta_motor = self.motor_efficiency_at_power(abs(p_mech))
-                return p_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
+                p_regen_mech = max(p_mech, -c.max_motor_power)
+                eta_motor = self.motor_efficiency_at_power(abs(p_regen_mech))
+                return p_regen_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
             else:
                 # Braking: no regeneration
                 return 0.0
@@ -340,8 +341,9 @@ class VehicleDynamics:
         if c.regen_efficiency > 0:
             mask_regen = p_mech <= 0
             if np.any(mask_regen):
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_mech[mask_regen]))
-                p_elec[mask_regen] = p_mech[mask_regen] * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
+                p_regen_mech = np.maximum(p_mech[mask_regen], -c.max_motor_power)
+                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_regen_mech))
+                p_elec[mask_regen] = p_regen_mech * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
 
         return p_elec
     
@@ -350,17 +352,20 @@ class VehicleDynamics:
         """
         Maximum braking deceleration from tire grip.
         
-        Dynamically computed from μ·g, with Factor of Safety applied.
+        Computed from μ·g·cos(θ) with Factor of Safety applied.
+        Aerodynamic downforce is intentionally omitted to keep this
+        velocity-independent (conservative estimate for braking envelopes).
         
         Args:
-            grade: Road grade (affects normal force slightly)
+            grade: Road grade (rise/run), affects normal force via cos(θ)
             traction_fos: Factor of Safety on traction (default 0.9)
             
         Returns:
             Max deceleration in m/s² (positive value)
         """
         c = self.config
-        return c.mu_tire * c.gravity * traction_fos
+        cos_theta = np.cos(np.arctan(grade))
+        return c.mu_tire * c.gravity * cos_theta * traction_fos
     
     def energy_for_segment(self, v1: float | np.ndarray, v2: float | np.ndarray, distance: float,
                            grade: float | np.ndarray = 0.0) -> float | np.ndarray:
