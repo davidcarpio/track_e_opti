@@ -136,7 +136,7 @@ class DPOptimizer(BaseOptimizer):
 
     # ── DP solve ────────────────────────────────────────────────────
 
-    def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float, float]:
+    def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float]:
         """
         Backward-induction DP over (distance, velocity) grid using a
         Lagrangian relaxation for the time constraint.
@@ -286,7 +286,7 @@ class DPOptimizer(BaseOptimizer):
                 best_start_j = j
 
         if best_start_j < 0:
-            return None, INF, INF
+            return None, INF
 
         # Trace optimal path
         velocities = np.zeros(n)
@@ -306,11 +306,8 @@ class DPOptimizer(BaseOptimizer):
         # Enforce exact stops
         velocities = self._enforce_stops(velocities)
         lap_time = self.compute_lap_time(velocities)
-        
-        # Calculate actual energy without lambda penalty
-        energy_cost = best_start_cost - lam * lap_time
 
-        return velocities, lap_time, energy_cost
+        return velocities, lap_time
 
     def _solve(self, **kwargs) -> np.ndarray:
         """
@@ -320,7 +317,7 @@ class DPOptimizer(BaseOptimizer):
         T_max = self.config.max_lap_time
         
         # 1. Try with no penalty (lam = 0)
-        v_fastest, t_fastest, _ = self._solve_for_lambda(0.0, **kwargs)
+        v_fastest, t_fastest = self._solve_for_lambda(0.0, **kwargs)
         if v_fastest is None:
             print("WARNING: DP found no feasible physical path even without time constraint!")
             # Fall back to heuristic
@@ -343,7 +340,7 @@ class DPOptimizer(BaseOptimizer):
         
         for _ in range(15):
             lam = (lam_low + lam_high) / 2.0
-            v, t, _ = self._solve_for_lambda(lam, **kwargs)
+            v, t = self._solve_for_lambda(lam, **kwargs)
             
             if v is None:
                 # Too much penalty, no path found? (Shouldn't happen for valid lambda)
