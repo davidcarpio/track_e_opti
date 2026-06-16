@@ -213,15 +213,15 @@ class DPOptimizer(BaseOptimizer):
                 f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
                 f_motor = self.vehicle.motor_limited_force(v_ref)
                 f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
-                f_max = np.minimum(f_traction, f_motor)
-                a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+                f_max = np.minimum(f_traction * self.config.traction_fos, f_motor)
+                a_max = (f_max - f_resist) / c.mass
                 feasible[mask_acc] = (v_t_valid[mask_acc]**2 <= v_f_valid[mask_acc]**2 + 2.0 * a_max * ds + 1e-6)
 
             mask_dec = v_t_valid < v_f_valid
             if np.any(mask_dec):
                 f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
                 f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
-                a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+                a_brake = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
                 feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)
 
             valid_mask[valid_mask] = feasible
@@ -243,12 +243,10 @@ class DPOptimizer(BaseOptimizer):
 
             mask_zero_avg = ~mask_avg
             if np.any(mask_zero_avg):
-                mask_any = (v_f_valid[mask_zero_avg] > 1e-6) | (v_t_valid[mask_zero_avg] > 1e-6)
-                if np.any(mask_any):
-                    # For elements where at least one is > 1e-6
-                    v_f_sub = v_f_valid[mask_zero_avg][mask_any]
-                    v_t_sub = v_t_valid[mask_zero_avg][mask_any]
-                    seg_time[mask_zero_avg][mask_any] = 2.0 * ds / np.maximum(v_f_sub, v_t_sub)
+                mask_any = (v_f_valid > 1e-6) | (v_t_valid > 1e-6)
+                mask_update = mask_zero_avg & mask_any
+                if np.any(mask_update):
+                    seg_time[mask_update] = 2.0 * ds / np.maximum(v_f_valid[mask_update], v_t_valid[mask_update])
 
             # Compute candidates
             next_cost = np.broadcast_to(cost[i + 1, :][None, :], (nv, nv))[valid_mask]
