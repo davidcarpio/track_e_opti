@@ -200,12 +200,9 @@ class BaseOptimizer(ABC):
         self.v_max[stop_idx] = 0.0
         self.stop_indices.append(stop_idx)
 
-        for i, d in enumerate(self.distances):
-            if i == stop_idx:
-                continue
-            dist_to_stop = abs(d - stop_distance)
-            v_braking = np.sqrt(2.0 * a_brake_max * dist_to_stop)
-            self.v_max[i] = min(self.v_max[i], v_braking)
+        dist_to_stop = np.abs(self.distances - stop_distance)
+        v_braking = np.sqrt(2.0 * a_brake_max * dist_to_stop)
+        self.v_max = np.minimum(self.v_max, v_braking)
 
     def _enforce_stops(self, v: np.ndarray) -> np.ndarray:
         """Force velocity to exactly zero at all stop nodes."""
