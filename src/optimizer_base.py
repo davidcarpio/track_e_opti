@@ -119,6 +119,37 @@ class OptimizationResult:
             'energy_recovered_regen_Wh': self.energy_recovered_regen_Wh,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "OptimizationResult":
+        """Reconstruct from dictionary."""
+        return cls(
+            distances=np.array(d['distance_m']),
+            velocities=np.array(d['velocity_ms']),
+            times=np.array(d['time_s']),
+            accelerations=np.array(d['acceleration_ms2']),
+            force_traction=np.array(d['force_traction_N']),
+            force_drag=np.array(d['force_drag_N']),
+            force_rolling=np.array(d['force_rolling_N']),
+            force_grade=np.array(d['force_grade_N']),
+            power_mechanical=np.array(d['power_mechanical_W']),
+            power_electrical=np.array(d['power_electrical_W']),
+            energy_cumulative=np.array(d['energy_cumulative_J']),
+            lateral_acceleration=np.array(d['lateral_acceleration_ms2']),
+            total_energy=d['total_energy_J'],
+            total_time=d['total_time_s'],
+            avg_velocity=d['avg_velocity_kmh'] / 3.6,
+            peak_power=d['peak_power_W'],
+            peak_force=d['peak_force_N'],
+            energy_aero_Wh=d.get('energy_aero_Wh', 0.0),
+            energy_rolling_Wh=d.get('energy_rolling_Wh', 0.0),
+            energy_grade_Wh=d.get('energy_grade_Wh', 0.0),
+            energy_drivetrain_loss_Wh=d.get('energy_drivetrain_loss_Wh', 0.0),
+            energy_mechanical_braking_Wh=d.get('energy_mechanical_braking_Wh', 0.0),
+            energy_potential_grade_Wh=d.get('energy_potential_grade_Wh', 0.0),
+            energy_potential_kinetic_Wh=d.get('energy_potential_kinetic_Wh', 0.0),
+            energy_recovered_regen_Wh=d.get('energy_recovered_regen_Wh', 0.0),
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Base optimizer

@@ -85,7 +85,7 @@ class RaceTab(QWidget):
 
         # RIGHT: Plots and Guide
         right = QWidget()
-        right_lay = QVBoxLayout(right)
+        right_lay = QHBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
         
         self.pw_pilot = PlotWidget(figsize=(7, 6))
