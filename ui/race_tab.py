@@ -9,8 +9,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from matplotlib.patches import Patch
 
+import numpy as np
+
 from src.pilot_reference import PilotReferenceGenerator, PilotConfig
-from ui.theme import ACCENT, TEXT_DIM, apply_mpl_theme
+from ui.theme import ACCENT, TEXT_DIM, ERROR, apply_mpl_theme
 from ui.plot_widget import PlotWidget
 
 
@@ -33,6 +35,9 @@ class RaceTab(QWidget):
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 8, 0)
+
+        self.pw_map = PlotWidget(figsize=(4, 3))
+        left_lay.addWidget(self.pw_map)
 
         cfg_box = QGroupBox("Pilot Constraints")
         form = QFormLayout(cfg_box)
@@ -73,6 +78,7 @@ class RaceTab(QWidget):
 
         self.btn_update = QPushButton("Update Pilot Ref")
         self.btn_update.setMinimumHeight(42)
+        self.btn_update.setStyleSheet(f"background-color: {ERROR}; color: #1a1b26;")
         self.btn_update.clicked.connect(self.update_pilot_ref)
         left_lay.addWidget(self.btn_update)
 
@@ -134,6 +140,22 @@ class RaceTab(QWidget):
         pilot_gen = PilotReferenceGenerator(track, vehicle, config)
         pilot_res = pilot_gen.generate(result)
 
+        # Draw map
+        self.pw_map.clear()
+        ax_m = self.pw_map.add_subplot(111)
+        xs = np.array([p.x for p in track.points])
+        ys = np.array([p.y for p in track.points])
+        from scipy.interpolate import interp1d
+        d_pts = np.array([p.distance for p in track.points])
+        v_interp = interp1d(result.distances, result.velocities * 3.6,
+                            bounds_error=False, fill_value="extrapolate")(d_pts)
+        sc = ax_m.scatter(xs, ys, c=v_interp, cmap="plasma", s=4)
+        self.pw_map.figure.colorbar(sc, ax=ax_m, label="km/h", shrink=0.8)
+        ax_m.set_aspect("equal")
+        ax_m.set_xlabel("X (m)"); ax_m.set_ylabel("Y (m)")
+        ax_m.set_title("Racetrack: Velocity Heatmap", fontsize=10, fontweight="bold")
+        self.pw_map.draw()
+
         d_p = pilot_res.distances
         v_p_kmh = pilot_res.velocities * 3.6
         ctrl_p = pilot_res.control_inputs * 100.0
@@ -190,10 +212,10 @@ class RaceTab(QWidget):
             if zones_p[i] != current_zone:
                 end_dist = d_p[i]
                 speed_at_transition = v_p_kmh[i]
-                lines.append(f"[{start_dist:6.1f}m -> {end_dist:6.1f}m] : {current_zone:10s} (End speed: {speed_at_transition:4.1f} km/h)")
+                lines.append(f"[{start_dist:6.1f}m to {end_dist:6.1f}m] : {current_zone:10s} (End speed: {speed_at_transition:4.1f} km/h)")
                 current_zone = zones_p[i]
                 start_dist = d_p[i]
 
-        lines.append(f"[{start_dist:6.1f}m -> {d_p[-1]:6.1f}m] : {current_zone:10s} (End speed: {v_p_kmh[-1]:4.1f} km/h)")
+        lines.append(f"[{start_dist:6.1f}m to {d_p[-1]:6.1f}m] : {current_zone:10s} (End speed: {v_p_kmh[-1]:4.1f} km/h)")
 
-        self.txt_pilot_guide.setText("\\n".join(lines))
+        self.txt_pilot_guide.setText("\n".join(lines))

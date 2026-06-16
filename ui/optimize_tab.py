@@ -164,12 +164,14 @@ class OptimizeTab(QWidget):
             side_lay.addWidget(lbl)
 
         side_lay.addStretch()
+        lay_losses.addWidget(side_panel, stretch=3)
+
         self.plot_tabs.addTab(self.pw_vel,   "Velocity")
         self.plot_tabs.addTab(self.pw_force, "Forces")
         self.plot_tabs.addTab(self.pw_energy,"Cumulative Energy")
         self.plot_tabs.addTab(self.tab_losses, "Energy Losses")
         self.plot_tabs.addTab(self.pw_accel, "Acceleration")
-        self.plot_tabs.addTab(self.pw_map,   "Map")
+        self.plot_tabs.addTab(self.pw_map,   "Racetrack")
 
         splitter.addWidget(self.plot_tabs)
         splitter.setStretchFactor(0, 3)
@@ -420,7 +422,7 @@ class OptimizeTab(QWidget):
         self.pw_map.figure.colorbar(sc, ax=ax, label="km/h", shrink=0.8)
         ax.set_aspect("equal")
         ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
-        ax.set_title("Track: Velocity Heatmap", fontsize=10, fontweight="bold")
+        ax.set_title("Racetrack: Velocity Heatmap", fontsize=10, fontweight="bold")
         self.pw_map.draw()
 
     #    redraw for theme switch    
