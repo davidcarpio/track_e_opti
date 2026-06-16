@@ -213,31 +213,11 @@ class VehicleDynamics:
         P = np.abs(power_mech)
         P_rated = self.config.max_motor_power
         
-        if not isinstance(P, np.ndarray):
-            if P < 5:
-                return 0.50  # Standstill/creep losses
-
-            load = P / P_rated  # Fraction of rated power
-
-            if load < 0.15:
-                # Very light load: 50-70%
-                return 0.50 + load * (0.70 - 0.50) / 0.15
-            elif load < 0.5:
-                # Light to medium: 70-87%
-                return 0.70 + (load - 0.15) * (0.87 - 0.70) / 0.35
-            elif load <= 1.0:
-                # Medium to full: 87-90% (peak)
-                return 0.87 + (load - 0.5) * (0.90 - 0.87) / 0.5
-            else:
-                # Overload: drops from 90% (should be rare now with power limit)
-                return max(0.65, 0.90 - (load - 1.0) * 0.25)
-
-        # Fast path for arrays: vectorize piecewise lookup using np.interp
         load = P / P_rated
         eff = np.interp(load, self._eff_xp, self._eff_yp)
         
         # Apply standstill cutoff directly
-        return np.where(P < 5, 0.50, eff)
+        return np.where(P < 5, 0.50, eff) if isinstance(P, np.ndarray) else (0.50 if P < 5 else float(eff))
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
