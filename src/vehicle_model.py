@@ -372,8 +372,12 @@ class VehicleDynamics:
             dt = distance / v_avg
             accel = (v2**2 - v1**2) / (2 * distance) if distance > 0 else 0
 
-            p_elec = self.electrical_power(v_avg, accel, grade)
-            return p_elec * dt
+            # Simpson's rule for int P dt: (P1 + 4*P_mid + P2) / 6 * dt
+            p1 = self.electrical_power(v1, accel, grade)
+            p2 = self.electrical_power(v2, accel, grade)
+            p_mid = self.electrical_power(v_avg, accel, grade)
+            
+            return (p1 + 4*p_mid + p2) / 6.0 * dt
 
         if distance <= 0:
             return np.zeros_like(v1)
@@ -389,13 +393,24 @@ class VehicleDynamics:
         if distance > 0:
             accel = (v2**2 - v1**2) / (2 * distance)
 
-        p_elec = np.zeros_like(v_avg)
+        e_elec = np.zeros_like(v_avg)
         if np.any(mask_valid):
             # We need grade to be aligned
             grade_valid = grade[mask_valid] if isinstance(grade, np.ndarray) else grade
-            p_elec[mask_valid] = self.electrical_power(v_avg[mask_valid], accel[mask_valid], grade_valid)
+            
+            v1_v = v1[mask_valid] if isinstance(v1, np.ndarray) else v1
+            v2_v = v2[mask_valid] if isinstance(v2, np.ndarray) else v2
+            v_avg_v = v_avg[mask_valid]
+            accel_v = accel[mask_valid]
+            dt_v = dt[mask_valid]
+            
+            p1 = self.electrical_power(v1_v, accel_v, grade_valid)
+            p2 = self.electrical_power(v2_v, accel_v, grade_valid)
+            p_mid = self.electrical_power(v_avg_v, accel_v, grade_valid)
+            
+            e_elec[mask_valid] = (p1 + 4*p_mid + p2) / 6.0 * dt_v
 
-        return p_elec * dt
+        return e_elec
 
 
 def validate_aero_forces():
