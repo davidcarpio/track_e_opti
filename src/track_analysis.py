@@ -229,11 +229,12 @@ class Track:
         distances = np.array([p.distance for p in self.points])
         elevations = np.array([p.elevation for p in self.points])
         
-        # Smooth elevations to eliminate high-frequency GPS noise
-        smoothing_window = 20
+        # Smooth elevations to eliminate high-frequency GPS noise.
+        # Use an odd window for symmetric padding (zero phase shift).
+        smoothing_window = 21
         if len(elevations) > smoothing_window:
-            pad_width = smoothing_window // 2
-            elev_padded = np.pad(elevations, (pad_width, smoothing_window - 1 - pad_width), mode='edge')
+            pad_width = smoothing_window // 2  # 10 on each side
+            elev_padded = np.pad(elevations, (pad_width, pad_width), mode='edge')
             elev_smooth = np.convolve(elev_padded, np.ones(smoothing_window)/smoothing_window, mode='valid')
         else:
             elev_smooth = elevations
