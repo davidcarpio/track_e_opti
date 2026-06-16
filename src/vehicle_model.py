@@ -28,7 +28,7 @@ class VehicleConfig:
     
     # Tire properties (Michelin 90/80 R16 estimates)
     crr: float = 0.010  # Rolling resistance coefficient (adjustable)
-
+    crr_speed_coeff: float = 5e-5  # Speed-dependent Crr term: Crr_eff = crr * (1 + k·v²)
     tire_radius: float = 0.282  # Wheel radius in m (90mm + 80% of 90mm + 8" rim)
     mu_tire: float = 0.8  # Friction coefficient (rubber on asphalt)
     
@@ -113,12 +113,12 @@ class VehicleDynamics:
     
     def rolling_resistance_force(self, velocity: float, grade: float = 0.0) -> float:
         """
-        Calculate rolling resistance force.
+        Calculate rolling resistance force (velocity-dependent).
         
-        F_rr = Crr * N
+        F_rr = Crr_eff * N, where Crr_eff = Crr * (1 + k·v²)
         
         Args:
-            velocity: Vehicle speed in m/s (used for downforce in normal load)
+            velocity: Vehicle speed in m/s
             grade: Road grade
             
         Returns:
@@ -126,7 +126,8 @@ class VehicleDynamics:
         """
         c = self.config
         normal = self.normal_force(velocity, grade)
-        return c.crr * normal
+        crr_eff = c.crr * (1.0 + c.crr_speed_coeff * velocity**2)
+        return crr_eff * normal
     
     def grade_force(self, grade: float) -> float:
         """
