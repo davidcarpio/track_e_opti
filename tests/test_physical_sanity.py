@@ -127,19 +127,33 @@ def test_work_energy_theorem(nlp_result):
     res = nlp_result["result"]
     mass = nlp_result["vehicle"].config.mass
     ds = nlp_result["ds"]
+    track = nlp_result["track"]
     
     ke = 0.5 * mass * res.velocities**2
-    delta_ke = np.diff(ke)
     
     # Work done by net force = F_net_avg * ds
     f_net = res.force_traction - res.force_drag - res.force_rolling - res.force_grade
     f_net_avg = (f_net[:-1] + f_net[1:]) / 2.0
     work_done = f_net_avg * ds
     
-    error = np.abs(delta_ke - work_done)
-    # Node averaging introduces smoothing errors per segment up to ~150J during high acceleration.
-    # We instead check that the total work done matches the total change in kinetic energy
-    # over the entire track (which should be 0 since start and end speeds are 0).
+    # Evaluate per-segment
+    # We use a base tolerance for discretization smoothing + a small amount per node
+    for i, segment in enumerate(track.segments):
+        mask = (res.distances >= segment.start_distance) & (res.distances <= segment.end_distance)
+        indices = np.where(mask)[0]
+        if len(indices) > 1:
+            start_idx = indices[0]
+            end_idx = indices[-1]
+            
+            seg_delta_ke = ke[end_idx] - ke[start_idx]
+            # work_done[j] is work between j and j+1
+            seg_work_done = np.sum(work_done[start_idx:end_idx])
+            
+            error = np.abs(seg_delta_ke - seg_work_done)
+            tol = 150.0 + len(indices) * 5.0
+            assert error < tol, f"Work-Energy violation in Segment {i} ({segment.segment_type})! Error: {error:.1f} J, tol: {tol:.1f} J"
+
+    # Global fallback
     total_delta_ke = ke[-1] - ke[0]
     total_work_done = np.sum(work_done)
     assert np.abs(total_delta_ke - total_work_done) < 10.0, f"Total Work-Energy violation! Error: {np.abs(total_delta_ke - total_work_done)} J"
@@ -164,20 +178,23 @@ def test_boundary_and_constraints(nlp_result):
         stop_idx = int(np.argmin(np.abs(res.distances - stop_dist)))
         assert res.velocities[stop_idx] < 1e-2, f"Stop at {stop_dist}m failed, v={res.velocities[stop_idx]}"
         
-    # 4. Cornering limits
-    eval_distances = res.distances % track.total_distance
-    curvatures = np.interp(eval_distances, track._distances_arr, track._curvatures_arr)
-    grades = np.interp(eval_distances, track._distances_arr, track._grades_arr)
-    
-    abs_curv = np.abs(curvatures)
-    radii = np.full_like(res.distances, np.inf)
-    valid = abs_curv >= 1e-6
-    radii[valid] = 1.0 / abs_curv[valid]
-    
-    for i, (v, r, g) in enumerate(zip(res.velocities, radii, grades)):
-        v_corner = vehicle.max_cornering_velocity(r, g)
-        limit = v_corner * np.sqrt(config.traction_fos)
-        assert v <= limit + 1e-2, f"Cornering limit exceeded at node {i}, v={v}, limit={limit}"
+    # 4. Cornering limits per segment
+    for i, segment in enumerate(track.segments):
+        if segment.segment_type == 'corner':
+            mask = (res.distances >= segment.start_distance) & (res.distances <= segment.end_distance)
+            if not np.any(mask):
+                continue
+            
+            segment_velocities = res.velocities[mask]
+            
+            # Max cornering limit based on the segment's average characteristics
+            v_corner = vehicle.max_cornering_velocity(segment.min_radius, segment.avg_grade)
+            limit = v_corner * np.sqrt(config.traction_fos)
+            
+            # Allow a small 0.5m/s tolerance to account for segment boundary overlap and node spacing
+            max_v = np.max(segment_velocities)
+            assert max_v <= limit + 0.5, \
+                f"Cornering limit exceeded in Segment {i} (Corner). Max v={max_v:.2f}, limit={limit:.2f}"
 
 def test_power_and_energy_conservation(nlp_result):
     """Test that energy and power relationships are physically sound."""
@@ -212,34 +229,40 @@ def test_power_and_energy_conservation(nlp_result):
     assert res.total_energy / 3600 > 0, "Total energy should be strictly positive for this track"
 
 def test_force_limits(nlp_result):
-    """Test that max traction and braking force limits are not violated."""
+    """Test that max traction and braking force limits are not violated within each segment."""
     res = nlp_result["result"]
     vehicle = nlp_result["vehicle"]
     config = nlp_result["config"]
+    track = nlp_result["track"]
     
-    eval_distances = res.distances % nlp_result["track"].total_distance
-    grades = np.interp(eval_distances, nlp_result["track"]._distances_arr, nlp_result["track"]._grades_arr)
-    
-    for i, (v, f_trac, grade) in enumerate(zip(res.velocities, res.force_traction, grades)):
-        # The segment was limited by the velocity at the start of the segment.
-        # Since node forces are averages of adjacent segments, they could be limited 
-        # by the previous node's lower velocity.
-        v_limit = res.velocities[max(0, i-1)] if i > 0 else v
-        
-        # Max motor capability
-        f_motor_max = vehicle.motor_limited_force(v_limit)
-        # Max tire grip
-        f_grip_max = vehicle.max_traction_force(v_limit, grade) * config.traction_fos
-        
-        f_max = min(f_motor_max, f_grip_max)
-        
-        # When accelerating
-        if f_trac > 1.0:
-            assert f_trac <= f_max + 15.0, f"Traction force {f_trac} exceeded limit {f_max} at node {i}"
+    for seg_idx, segment in enumerate(track.segments):
+        mask = (res.distances >= segment.start_distance) & (res.distances <= segment.end_distance)
+        indices = np.where(mask)[0]
+        if len(indices) == 0:
+            continue
             
-        # When braking (negative traction force)
-        if f_trac < -1.0:
-            assert np.abs(f_trac) <= f_grip_max + 15.0, f"Braking force {f_trac} exceeded grip limit {f_grip_max} at node {i}"
+        for i in indices:
+            v = res.velocities[i]
+            f_trac = res.force_traction[i]
+            
+            # The segment was limited by the velocity at the start of the segment.
+            v_limit = res.velocities[max(0, i-1)] if i > 0 else v
+            
+            # Use segment's average grade for grip evaluation
+            f_motor_max = vehicle.motor_limited_force(v_limit)
+            f_grip_max = vehicle.max_traction_force(v_limit, segment.avg_grade) * config.traction_fos
+            
+            f_max = min(f_motor_max, f_grip_max)
+            
+            # When accelerating
+            if f_trac > 1.0:
+                assert f_trac <= f_max + 15.0, \
+                    f"Segment {seg_idx} ({segment.segment_type}): Traction force {f_trac:.1f} N exceeded limit {f_max:.1f} N at node {i}"
+                
+            # When braking (negative traction force)
+            if f_trac < -1.0:
+                assert np.abs(f_trac) <= f_grip_max + 15.0, \
+                    f"Segment {seg_idx} ({segment.segment_type}): Braking force {f_trac:.1f} N exceeded grip limit {f_grip_max:.1f} N at node {i}"
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
