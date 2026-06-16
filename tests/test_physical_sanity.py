@@ -179,22 +179,31 @@ def test_boundary_and_constraints(nlp_result):
         assert res.velocities[stop_idx] < 1e-2, f"Stop at {stop_dist}m failed, v={res.velocities[stop_idx]}"
         
     # 4. Cornering limits per segment
-    for i, segment in enumerate(track.segments):
+    eval_distances = res.distances % track.total_distance
+    curvatures = np.interp(eval_distances, track._distances_arr, track._curvatures_arr)
+    grades = np.interp(eval_distances, track._distances_arr, track._grades_arr)
+    
+    abs_curv = np.abs(curvatures)
+    radii = np.full_like(res.distances, np.inf)
+    valid = abs_curv >= 1e-6
+    radii[valid] = 1.0 / abs_curv[valid]
+    
+    for seg_idx, segment in enumerate(track.segments):
         if segment.segment_type == 'corner':
             mask = (res.distances >= segment.start_distance) & (res.distances <= segment.end_distance)
-            if not np.any(mask):
+            indices = np.where(mask)[0]
+            if len(indices) == 0:
                 continue
             
-            segment_velocities = res.velocities[mask]
-            
-            # Max cornering limit based on the segment's average characteristics
-            v_corner = vehicle.max_cornering_velocity(segment.min_radius, segment.avg_grade)
-            limit = v_corner * np.sqrt(config.traction_fos)
-            
-            # Allow a small 0.5m/s tolerance to account for segment boundary overlap and node spacing
-            max_v = np.max(segment_velocities)
-            assert max_v <= limit + 0.5, \
-                f"Cornering limit exceeded in Segment {i} (Corner). Max v={max_v:.2f}, limit={limit:.2f}"
+            for i in indices:
+                v = res.velocities[i]
+                r = radii[i]
+                g = grades[i]
+                
+                v_corner = vehicle.max_cornering_velocity(r, g)
+                limit = v_corner * np.sqrt(config.traction_fos)
+                assert v <= limit + 1e-2, \
+                    f"Cornering limit exceeded in Segment {seg_idx} (Corner) at node {i}, v={v:.2f}, limit={limit:.2f}"
 
 def test_power_and_energy_conservation(nlp_result):
     """Test that energy and power relationships are physically sound."""
