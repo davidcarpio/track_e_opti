@@ -173,13 +173,26 @@ class TrackTab(QWidget):
 
         #  elevation  
         self.ax_elev.clear()
-        self.ax_elev.fill_between(d, e, alpha=0.25, color=ACCENT)
-        self.ax_elev.plot(d, e, color=ACCENT, linewidth=1.4)
+        
+        # Calculate smoothed elevation (same logic as in track_analysis.py)
+        smoothing_window = 21
+        if len(e) > smoothing_window:
+            pad_width = smoothing_window // 2
+            elev_padded = np.pad(e, (pad_width, pad_width), mode='edge')
+            e_smooth = np.convolve(elev_padded, np.ones(smoothing_window)/smoothing_window, mode='valid')
+        else:
+            e_smooth = e
+            
+        self.ax_elev.fill_between(d, e, alpha=0.15, color=ACCENT)
+        self.ax_elev.plot(d, e, color=ACCENT, linewidth=0.8, alpha=0.5, label="Raw")
+        self.ax_elev.plot(d, e_smooth, color="#f7768e", linewidth=1.5, label="Smoothed")
+        
         e_min, e_max = float(np.min(e)), float(np.max(e))
         e_pad = max((e_max - e_min) * 0.2, 0.5)   # at least 0.5 ?
         self.ax_elev.set_ylim(e_min - e_pad, e_max + e_pad)
         self.ax_elev.set_ylabel("Elevation (m)")
         self.ax_elev.set_title("Elevation Profile", fontsize=10, fontweight="bold")
+        self.ax_elev.legend(fontsize=8)
 
         #  curvature 
         self.ax_curv.clear()
