@@ -40,20 +40,34 @@ def _smooth_motor_efficiency(p_mech: "ca.SX", p_rated: float) -> "ca.SX":
     Smooth approximation of motor efficiency as function of mechanical
     power, suitable for CasADi symbolic graphs.
 
-    Uses a rational polynomial that closely matches the piecewise curve
-    in VehicleDynamics.motor_efficiency_at_power():
+    Matches the piecewise curve in VehicleDynamics.motor_efficiency_at_power():
+      - Rises from η_min=0.50 at zero load to η_max=0.90 at rated load
+      - Drops back to ~0.65 at 2× rated (overload penalty)
 
-        η ≈ η_max · x / (x + k)              (x = |P| / P_rated)
+    Uses a rational rise multiplied by a Gaussian overload decay:
+        η_rise = η_peak · x / (x + k)
+        η_decay = 1 - drop_mag · max(0, x - 1)² / (1 + max(0, x - 1)²)
+        η = max(η_rise · η_decay, η_min)
 
-    with a floor η_min to avoid division-by-zero at standstill.
+    The logistic decay form keeps η_decay bounded in [1-drop_mag, 1] and
+    is smooth everywhere (no kinks for IPOPT).
     """
-    eta_max = 0.90
+    eta_peak = 0.92   # Slightly above 0.90 so rational·decay ≈ 0.90 at x=1
     eta_min = 0.50
-    k = 0.12  # half-power load fraction
+    k = 0.08          # Tuned for mid-range accuracy
 
     x = _smooth_abs(p_mech) / p_rated
-    eta_raw = eta_max * x / (x + k)
-    return _smooth_max(eta_raw, eta_min)
+
+    # Rising part: 0 → eta_peak as load increases
+    eta_rise = eta_peak * x / (x + k)
+
+    # Overload decay: smoothly drops above x=1
+    # At x=2: excess=1, decay = 1 - 0.30*1/(1+1) = 0.85 → η ≈ 0.92*0.94*0.85 ≈ 0.66
+    excess = _smooth_max(x - 1.0, 0.0)
+    drop_mag = 0.30
+    eta_decay = 1.0 - drop_mag * excess * excess / (1.0 + excess * excess)
+
+    return _smooth_max(eta_rise * eta_decay, eta_min)
 
 
 def _smooth_max(a, b, eps: float = 1e-4):
@@ -116,10 +130,11 @@ class NLPOptimizer(BaseOptimizer):
 
         if c.regen_efficiency > 0:
             # Allow regen: p_elec can be negative
+            p_regen_mech = ca.fmax(p_mech, -c.max_motor_power)
             eta_regen = _smooth_motor_efficiency(
-                _smooth_abs(p_mech), c.max_motor_power
+                _smooth_abs(p_regen_mech), c.max_motor_power
             )
-            p_regen = p_mech * eta_regen * c.drivetrain_efficiency * c.regen_efficiency
+            p_regen = p_regen_mech * eta_regen * c.drivetrain_efficiency * c.regen_efficiency
             # Use p_elec when p_mech > 0, p_regen when p_mech < 0
             # smooth switch via sigmoid
             sigma = 0.5 * (1 + ca.tanh(5 * p_mech))
