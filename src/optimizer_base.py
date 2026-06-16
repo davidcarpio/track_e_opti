@@ -426,26 +426,28 @@ class BaseOptimizer(ABC):
             times[i + 1] = times[i] + seg_dt[i]
             energy_cumulative[i + 1] = energy_cumulative[i] + seg_energy[i]
 
-        # Interior nodes: average of adjacent segments
-        node_arrays = {
-            'accel': (np.zeros(n), seg_accel),
-            'f_trac': (np.zeros(n), seg_f_traction),
-            'f_drag': (np.zeros(n), seg_f_drag),
-            'f_roll': (np.zeros(n), seg_f_rolling),
-            'f_grade': (np.zeros(n), seg_f_grade),
-            'p_mech': (np.zeros(n), seg_p_mech),
-            'p_elec': (np.zeros(n), seg_p_elec),
-        }
-        for _key, (arr, seg) in node_arrays.items():
+        # Interior nodes: average of adjacent segments; endpoints take first/last segment.
+        def _seg_to_node(seg: np.ndarray) -> np.ndarray:
+            arr = np.zeros(n)
             arr[1:-1] = (seg[:-1] + seg[1:]) / 2
             arr[0] = seg[0]
             arr[-1] = seg[-1]
+            return arr
 
-        # Stops: use larger-magnitude side
+        node_accel = _seg_to_node(seg_accel)
+        node_f_trac = _seg_to_node(seg_f_traction)
+        node_f_drag = _seg_to_node(seg_f_drag)
+        node_f_roll = _seg_to_node(seg_f_rolling)
+        node_f_grade = _seg_to_node(seg_f_grade)
+        node_p_mech = _seg_to_node(seg_p_mech)
+        node_p_elec = _seg_to_node(seg_p_elec)
+
+        # Stops: use larger-magnitude side for discontinuous quantities
+        stop_node_arrays = [node_accel, node_f_trac, node_p_mech, node_p_elec]
+        stop_seg_arrays = [seg_accel, seg_f_traction, seg_p_mech, seg_p_elec]
         for idx in self.stop_indices:
             if 0 < idx < n - 1:
-                for _key in ('accel', 'f_trac', 'p_mech', 'p_elec'):
-                    arr, seg = node_arrays[_key]
+                for arr, seg in zip(stop_node_arrays, stop_seg_arrays):
                     arr[idx] = (
                         seg[idx - 1]
                         if abs(seg[idx - 1]) >= abs(seg[idx])
@@ -468,13 +470,13 @@ class BaseOptimizer(ABC):
             distances=self.distances,
             velocities=velocities,
             times=times,
-            accelerations=node_arrays['accel'][0],
-            force_traction=node_arrays['f_trac'][0],
-            force_drag=node_arrays['f_drag'][0],
-            force_rolling=node_arrays['f_roll'][0],
-            force_grade=node_arrays['f_grade'][0],
-            power_mechanical=node_arrays['p_mech'][0],
-            power_electrical=node_arrays['p_elec'][0],
+            accelerations=node_accel,
+            force_traction=node_f_trac,
+            force_drag=node_f_drag,
+            force_rolling=node_f_roll,
+            force_grade=node_f_grade,
+            power_mechanical=node_p_mech,
+            power_electrical=node_p_elec,
             energy_cumulative=energy_cumulative,
             total_energy=total_energy,
             total_time=total_time,
