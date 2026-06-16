@@ -23,10 +23,15 @@ class RaceTab(QWidget):
         super().__init__(parent)
         self.state = app_state
         self._current_result = None
+        self._current_track = None
         apply_mpl_theme()
         self._build_ui()
 
     def _build_ui(self):
+        from ui.theme import get_stylesheet, ACCENT, ERROR
+        custom_style = get_stylesheet().replace(ACCENT, ERROR).replace("#89b4fa", "#ff8f9f")
+        self.setStyleSheet(custom_style)
+
         root = QHBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -78,7 +83,6 @@ class RaceTab(QWidget):
 
         self.btn_update = QPushButton("Update Pilot Ref")
         self.btn_update.setMinimumHeight(42)
-        self.btn_update.setStyleSheet(f"background-color: {ERROR}; color: #1a1b26;")
         self.btn_update.clicked.connect(self.update_pilot_ref)
         left_lay.addWidget(self.btn_update)
 
@@ -113,17 +117,52 @@ class RaceTab(QWidget):
     def showEvent(self, event):
         """Called when the tab becomes visible."""
         super().showEvent(event)
-        # Check if there is a new result to process
-        if getattr(self.state, 'last_result', None) is not self._current_result:
+        # Check if there is a new result or track to process
+        if (getattr(self.state, 'last_result', None) is not self._current_result or 
+            self.state.track is not self._current_track):
             self.update_pilot_ref()
 
     def update_pilot_ref(self):
-        result = getattr(self.state, 'last_result', None)
         track = self.state.track
-        vehicle = self.state.vehicle
+        if not track:
+            return
 
-        if not result or not track or not vehicle:
-            self.lbl_status.setText("Run Optimise first.")
+        self._current_track = track
+
+        # Draw map (unconditionally for the current track)
+        self.pw_map.clear()
+        ax_m = self.pw_map.add_subplot(111)
+        xs = np.array([p.x for p in track.points])
+        ys = np.array([p.y for p in track.points])
+        
+        result = getattr(self.state, 'last_result', None)
+        has_valid_result = (
+            result is not None and 
+            len(result.distances) > 0 and 
+            abs(result.distances[-1] - track.total_distance) < 1.0
+        )
+
+        if has_valid_result:
+            from scipy.interpolate import interp1d
+            d_pts = np.array([p.distance for p in track.points])
+            v_interp = interp1d(result.distances, result.velocities * 3.6,
+                                bounds_error=False, fill_value="extrapolate")(d_pts)
+            sc = ax_m.scatter(xs, ys, c=v_interp, cmap="plasma", s=4)
+        else:
+            ax_m.scatter(xs, ys, color=TEXT_DIM, s=4)
+
+        ax_m.set_aspect("equal")
+        ax_m.axis("off")
+        self.pw_map.figure.tight_layout(pad=0)
+        self.pw_map.draw()
+
+        if not has_valid_result or not self.state.vehicle:
+            self.lbl_status.setText("Run Simulation to generate Pilot Reference.")
+            self.ax_pilot_v.clear()
+            self.ax_pilot_c.clear()
+            self.ax_pilot_z.clear()
+            self.pw_pilot.draw()
+            self.txt_pilot_guide.setText("")
             return
 
         self._current_result = result
@@ -137,25 +176,10 @@ class RaceTab(QWidget):
             force_deadband_N=self.spin_deadband.value()
         )
 
-        pilot_gen = PilotReferenceGenerator(track, vehicle, config)
+
+        pilot_gen = PilotReferenceGenerator(track, self.state.vehicle, config)
         pilot_res = pilot_gen.generate(result)
-
-        # Draw map
-        self.pw_map.clear()
-        ax_m = self.pw_map.add_subplot(111)
-        xs = np.array([p.x for p in track.points])
-        ys = np.array([p.y for p in track.points])
-        from scipy.interpolate import interp1d
-        d_pts = np.array([p.distance for p in track.points])
-        v_interp = interp1d(result.distances, result.velocities * 3.6,
-                            bounds_error=False, fill_value="extrapolate")(d_pts)
-        sc = ax_m.scatter(xs, ys, c=v_interp, cmap="plasma", s=4)
-        self.pw_map.figure.colorbar(sc, ax=ax_m, label="km/h", shrink=0.8)
-        ax_m.set_aspect("equal")
-        ax_m.set_xlabel("X (m)"); ax_m.set_ylabel("Y (m)")
-        ax_m.set_title("Racetrack: Velocity Heatmap", fontsize=10, fontweight="bold")
-        self.pw_map.draw()
-
+        
         d_p = pilot_res.distances
         v_p_kmh = pilot_res.velocities * 3.6
         ctrl_p = pilot_res.control_inputs * 100.0
