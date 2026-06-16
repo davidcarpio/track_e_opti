@@ -238,11 +238,20 @@ class NLPOptimizer(BaseOptimizer):
         g_vec = ca.vertcat(*g)
 
         # ── initial guess: feasible from greedy-style heuristic ─────
-        # Use robust optimal initial guess to help IPOPT converge
+        # Use robust optimal initial guess to help IPOPT converge.
+        # To save time, we run a coarse DP solve and interpolate, rather
+        # than running a full DP solve at the NLP's high resolution.
+        import copy
         from .optimizer_dp import DPOptimizer
-        dp = DPOptimizer(self.track, self.vehicle, self.config)
+        
+        coarse_config = copy.deepcopy(self.config)
+        coarse_config.num_nodes = min(100, self.config.num_nodes)
+        
+        dp = DPOptimizer(self.track, self.vehicle, coarse_config)
         res = dp.optimize()
-        v0 = res.velocities
+        
+        # Interpolate the coarse DP velocity profile to our NLP grid
+        v0 = np.interp(self.distances, res.distances, res.velocities)
 
         # ── create NLP and solve ────────────────────────────────────
         nlp = {"x": v, "f": total_energy / 1000.0, "g": g_vec}
