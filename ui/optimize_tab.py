@@ -33,6 +33,7 @@ class OptimizeTab(QWidget):
         self._worker: OptimizationWorker | None = None
         self._result: OptimizationResult | None = None
         self._track_for_result: Track | None = None
+        self._last_run_stops: list[float] | None = None
         apply_mpl_theme()
         self._build_ui()
 
@@ -410,6 +411,8 @@ class OptimizeTab(QWidget):
         )
         method = self.combo_method.currentData()
 
+        self._last_run_stops = stop_distances
+
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("Optimising…")
         self.lbl_status.setStyleSheet(f"color: {ACCENT};")
@@ -468,7 +471,7 @@ class OptimizeTab(QWidget):
 
     def _draw_plots(self, track: Track, r: OptimizationResult):
         apply_mpl_theme()
-        stops = self.state.stop_distances
+        stops = self._last_run_stops if self._last_run_stops is not None else self.state.stop_distances
 
         # velocity
         ax = self.ax_vel; ax.clear()
