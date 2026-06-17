@@ -5,15 +5,18 @@ Parameters are grouped by category (Aero, Tires, Geometry, Powertrain,
 Limits) and displayed in a 2-column grid without spinbox arrows.
 """
 
+import json
+from dataclasses import asdict
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QDoubleSpinBox, QGroupBox, QGridLayout, QPushButton,
-    QScrollArea, QFrame, QAbstractSpinBox,
+    QScrollArea, QFrame, QAbstractSpinBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt
 
 from src.vehicle_model import VehicleConfig, VehicleDynamics
-from ui.theme import TEXT_DIM, SUCCESS
+from ui.theme import TEXT_DIM, SUCCESS, ERROR
 
 
 # Each entry: (attribute, label, unit, min, max, step, decimals, tooltip)
@@ -125,6 +128,16 @@ class VehicleTab(QWidget):
         self.status_label.setStyleSheet(f"color: {SUCCESS}; font-size: 12px;")
         bar.addWidget(self.status_label, stretch=1)
 
+        btn_load = QPushButton("Load...")
+        btn_load.setFixedWidth(100)
+        btn_load.clicked.connect(self._load_from_file)
+        bar.addWidget(btn_load)
+
+        btn_save = QPushButton("Save...")
+        btn_save.setFixedWidth(100)
+        btn_save.clicked.connect(self._save_to_file)
+        bar.addWidget(btn_save)
+
         btn_reset = QPushButton("Reset Defaults")
         btn_reset.setFixedWidth(140)
         btn_reset.clicked.connect(self._load_defaults)
@@ -137,6 +150,46 @@ class VehicleTab(QWidget):
         """Iterate (attr, ...) across all categories."""
         for _, fields in _CATEGORIES:
             yield from fields
+
+    def _save_to_file(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Vehicle Config", "", "JSON Files (*.json)")
+        if path:
+            try:
+                config_dict = asdict(self.state.vehicle.config)
+                with open(path, 'w') as f:
+                    json.dump(config_dict, f, indent=4)
+                self.status_label.setStyleSheet(f"color: {SUCCESS}; font-size: 12px;")
+                self.status_label.setText(f"Saved to {path.split('/')[-1]}")
+            except Exception as e:
+                self.status_label.setStyleSheet(f"color: {ERROR}; font-size: 12px;")
+                self.status_label.setText(f"Error saving: {str(e)}")
+
+    def _load_from_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load Vehicle Config", "", "JSON Files (*.json)")
+        if path:
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                
+                for attr, *_ in self._all_fields():
+                    if attr in data:
+                        self._spinboxes[attr].blockSignals(True)
+                        self._spinboxes[attr].setValue(data[attr])
+                        self._spinboxes[attr].blockSignals(False)
+                
+                current_config = asdict(self.state.vehicle.config)
+                valid_keys = current_config.keys()
+                for k, v in data.items():
+                    if k in valid_keys:
+                        current_config[k] = v
+                
+                self.state.vehicle = VehicleDynamics(VehicleConfig(**current_config))
+                
+                self.status_label.setStyleSheet(f"color: {SUCCESS}; font-size: 12px;")
+                self.status_label.setText(f"Loaded from {path.split('/')[-1]}")
+            except Exception as e:
+                self.status_label.setStyleSheet(f"color: {ERROR}; font-size: 12px;")
+                self.status_label.setText(f"Error loading: {str(e)}")
 
     def _load_defaults(self):
         defaults = VehicleConfig()
