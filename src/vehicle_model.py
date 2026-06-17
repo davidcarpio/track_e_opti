@@ -209,10 +209,11 @@ class VehicleDynamics:
     
     def motor_efficiency_at_power(self, power_mech: float | np.ndarray) -> float | np.ndarray:
         """
-        Motor+controller efficiency as a function of mechanical power.
+        Motor+controller efficiency via piecewise-linear interpolation.
         
-        Realistic curve: low at very low power (iron/copper losses dominate),
-        peaks at ~60-80% rated, drops slightly at overload.
+        **Reference only** — used for fitting the smooth curve to real
+        test-bench data in the Power Unit tab.  All energy calculations
+        (NLP, DP, result reporting) now use smooth_motor_efficiency().
         
         Args:
             power_mech: Mechanical power in W (positive)
@@ -228,6 +229,46 @@ class VehicleDynamics:
         
         # Apply standstill cutoff directly
         return np.where(P < 5, 0.50, eff) if isinstance(P, np.ndarray) else (0.50 if P < 5 else float(eff))
+
+    def smooth_motor_efficiency(self, power_mech: float | np.ndarray) -> float | np.ndarray:
+        """
+        Smooth motor+controller efficiency as a function of mechanical power.
+        
+        Uses the same rational-rise × overload-decay formula as the CasADi
+        NLP solver, ensuring perfect consistency between the optimizer
+        objective and the post-processing energy calculations.
+        
+        Formula:
+            x       = |P_mech| / P_rated
+            η_rise  = η_min + (η_peak - η_min) · x / (x + k)
+            excess  = max(x - 1, 0)
+            η_decay = 1 - drop_mag · excess² / (1 + excess²)
+            η       = max(η_rise · η_decay, η_min)
+        
+        Args:
+            power_mech: Mechanical power in W (positive)
+            
+        Returns:
+            Efficiency (0..1)
+        """
+        c = self.config
+        P = np.abs(power_mech)
+        x = P / c.max_motor_power
+
+        eta_rise = c.nlp_eta_min + (c.nlp_eta_peak - c.nlp_eta_min) * x / (x + c.nlp_k)
+
+        if isinstance(x, np.ndarray):
+            excess = np.maximum(x - 1.0, 0.0)
+        else:
+            excess = max(x - 1.0, 0.0)
+
+        eta_decay = 1.0 - c.nlp_drop_mag * excess * excess / (1.0 + excess * excess)
+
+        eta = eta_rise * eta_decay
+
+        if isinstance(eta, np.ndarray):
+            return np.maximum(eta, c.nlp_eta_min)
+        return max(eta, c.nlp_eta_min)
     
     def max_cornering_velocity(self, radius: float, grade: float = 0.0) -> float:
         """
@@ -307,12 +348,12 @@ class VehicleDynamics:
         if not isinstance(p_mech, np.ndarray):
             if p_mech > 0:
                 # Driving: motor + drivetrain losses
-                eta_motor = self.motor_efficiency_at_power(p_mech)
+                eta_motor = self.smooth_motor_efficiency(p_mech)
                 return p_mech / (eta_motor * c.drivetrain_efficiency)
             elif c.regen_efficiency > 0:
                 # Braking with regen: return negative power (energy recovered)
                 p_regen_mech = max(p_mech, -c.max_motor_power)
-                eta_motor = self.motor_efficiency_at_power(abs(p_regen_mech))
+                eta_motor = self.smooth_motor_efficiency(abs(p_regen_mech))
                 return p_regen_mech * eta_motor * c.drivetrain_efficiency * c.regen_efficiency
             else:
                 # Braking: no regeneration
@@ -324,7 +365,7 @@ class VehicleDynamics:
         # Driving condition
         mask_drive = p_mech > 0
         if np.any(mask_drive):
-            eta_motor_drive = self.motor_efficiency_at_power(p_mech[mask_drive])
+            eta_motor_drive = self.smooth_motor_efficiency(p_mech[mask_drive])
             p_elec[mask_drive] = p_mech[mask_drive] / (eta_motor_drive * c.drivetrain_efficiency)
 
         # Braking with regen condition
@@ -332,7 +373,7 @@ class VehicleDynamics:
             mask_regen = p_mech <= 0
             if np.any(mask_regen):
                 p_regen_mech = np.maximum(p_mech[mask_regen], -c.max_motor_power)
-                eta_motor_regen = self.motor_efficiency_at_power(np.abs(p_regen_mech))
+                eta_motor_regen = self.smooth_motor_efficiency(np.abs(p_regen_mech))
                 p_elec[mask_regen] = p_regen_mech * eta_motor_regen * c.drivetrain_efficiency * c.regen_efficiency
 
         return p_elec
