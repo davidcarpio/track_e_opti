@@ -50,17 +50,7 @@ _CATEGORIES: list[tuple[str, list]] = [
          "Measure by weighing front wheels separately, or "
          "compute from CG position: front_dist = rear_overhang / wheelbase."),
     ]),
-    ("Powertrain", [
-        ("motor_efficiency", "Motor Efficiency", "", 0.1, 1.0, 0.01, 2,
-         "Motor + controller peak η"),
-        ("battery_voltage", "Battery Voltage", "V", 10, 200, 1.0, 1, ""),
-        ("max_motor_power", "Max Motor Power", "W", 50, 50000, 10.0, 0,
-         "Rated continuous power"),
-        ("drivetrain_efficiency", "Drivetrain Eff.", "", 0.5, 1.0, 0.01, 2,
-         "Chain/belt/bearing losses (1.0 = ideal)"),
-        ("regen_efficiency", "Regen Efficiency", "", 0.0, 1.0, 0.01, 2,
-         "Regenerative braking efficiency (0 = no regen)"),
-    ]),
+
     ("Limits", [
         ("max_velocity", "Max Velocity", "m/s", 1.0, 30.0, 0.1, 2, ""),
     ]),
@@ -164,4 +154,11 @@ class VehicleTab(QWidget):
     def _apply_to_state(self):
         kwargs = {attr: self._spinboxes[attr].value()
                   for attr, *_ in self._all_fields()}
+                  
+        # Update any non-vehicle-tab params from current config to avoid overwriting them
+        current = self.state.vehicle.config
+        for f in current.__dataclass_fields__:
+            if f not in kwargs:
+                kwargs[f] = getattr(current, f)
+                
         self.state.vehicle = VehicleDynamics(VehicleConfig(**kwargs))

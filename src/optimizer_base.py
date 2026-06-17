@@ -38,6 +38,10 @@ class OptimizationConfig:
     # Optimization parameters
     max_iterations: int = 2000
     tol: float = 1e-6
+    acceptable_tol: float = 10.0
+    acceptable_obj_change_tol: float = 1e-1
+    acceptable_iter: int = 10
+    jerk_penalty_weight: float = 1000.0
 
     # Factor of Safety (FoS) on traction / braking limits
     traction_fos: float = 0.9

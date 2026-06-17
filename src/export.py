@@ -45,3 +45,28 @@ def export_optimization_results(result: OptimizationResult, output_dir: Path):
         json.dump(result.to_dict(), f, indent=2)
 
     return csv_path, json_path
+
+def export_pilot_results(pilot_result, output_dir: Path):
+    """Export pilot reference results to CSV."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    csv_path = output_dir / "pilot_reference.csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "distance_m", "velocity_kmh", "time_s",
+            "acceleration_ms2", "control_input_percent",
+            "action_zone", "energy_cumulative_Wh"
+        ])
+        for i in range(len(pilot_result.distances)):
+            w.writerow([
+                f"{pilot_result.distances[i]:.2f}",
+                f"{pilot_result.velocities[i]*3.6:.2f}",
+                f"{pilot_result.times[i]:.2f}",
+                f"{pilot_result.accelerations[i]:.4f}",
+                f"{pilot_result.control_inputs[i]*100:.1f}",
+                pilot_result.action_zones[i],
+                f"{pilot_result.energy_cumulative[i]/3600:.4f}",
+            ])
+            
+    return csv_path

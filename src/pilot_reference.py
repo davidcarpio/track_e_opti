@@ -1,7 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
 from typing import List
-from scipy.signal import savgol_filter
 
 from .optimizer_base import OptimizationResult
 from .track_analysis import Track
@@ -13,8 +12,8 @@ class PilotConfig:
     max_accel: float = 1.5      # m/s^2 (Approx 0.15g)
     max_brake: float = -2.0     # m/s^2 (Approx 0.2g)
     pedal_transition_time_s: float = 0.5  # Time to go 0 to 100% pedal (seconds)
-    filter_window_size: int = 15  # For Savitzky-Golay filter, must be odd
-    force_deadband_N: float = 0.0 # Traction force margin for coasting (N)
+    force_deadband_N: float = 10.0 # Traction force margin for coasting (N)
+    hold_accel_threshold: float = 0.1 # Max acceleration (m/s^2) to be considered 'HOLD' instead of 'ACCELERATE'
 
 @dataclass
 class PilotResult:
@@ -44,14 +43,8 @@ class PilotReferenceGenerator:
         n = len(raw_result.distances)
         ds = raw_result.distances[1] - raw_result.distances[0]
         
-        # 1. Smooth velocities to remove finite-difference numerical noise
-        window = min(self.config.filter_window_size, n)
-        if window % 2 == 0:
-            window -= 1
-        if window < 3:
-            window = 3
-            
-        smoothed_v = savgol_filter(raw_result.velocities, window, polyorder=2)
+        # 1. Start with raw velocities (avoiding Savitzky-Golay filter to prevent ringing at stops)
+        smoothed_v = raw_result.velocities.copy()
         smoothed_v = np.maximum(smoothed_v, 0.0)  # Cannot have negative speed
         
         # Maintain exact stops
@@ -149,9 +142,14 @@ class PilotReferenceGenerator:
         
         for i in range(n):
             a = final_accel[i]
-            v = final_v[i]
-            grade = grades[i]
-            resist = self.vehicle.total_resistance_force(v, grade)
+            if i < n - 1:
+                v_eval = (final_v[i] + final_v[i+1]) / 2.0
+                grade_eval = (grades[i] + grades[i+1]) / 2.0
+            else:
+                v_eval = final_v[i]
+                grade_eval = grades[i]
+                
+            resist = self.vehicle.total_resistance_force(v_eval, grade_eval)
             
             # Calculate required traction force (F_traction = F_resist + m*a)
             f_trac = resist + self.vehicle.config.mass * a
@@ -163,7 +161,10 @@ class PilotReferenceGenerator:
             if f_trac > db:
                 # Needs positive traction (Throttle)
                 ctrl = min(f_trac / (self.vehicle.config.mass * self.config.max_accel), 1.0)
-                zone = "ACCELERATE"
+                if a > self.config.hold_accel_threshold:
+                    zone = "ACCELERATE"
+                else:
+                    zone = "HOLD"
             elif f_trac < -db:
                 # Needs negative traction (Mechanical Brakes)
                 ctrl = -min(abs(f_trac) / (self.vehicle.config.mass * abs(self.config.max_brake)), 1.0)

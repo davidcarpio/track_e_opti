@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from matplotlib.patches import Patch
+import matplotlib.ticker as ticker
 
 import numpy as np
 
@@ -67,16 +68,10 @@ class RaceTab(QWidget):
         self.spin_pedal_time.setValue(0.5)
         form.addRow("Pedal Time (s):", self.spin_pedal_time)
 
-        self.spin_filter_window = QSpinBox()
-        self.spin_filter_window.setRange(3, 101)
-        self.spin_filter_window.setSingleStep(2)
-        self.spin_filter_window.setValue(15)
-        form.addRow("Filter Window:", self.spin_filter_window)
-
         self.spin_deadband = QDoubleSpinBox()
         self.spin_deadband.setRange(0.0, 50.0)
         self.spin_deadband.setSingleStep(1.0)
-        self.spin_deadband.setValue(0.0)
+        self.spin_deadband.setValue(10.0)
         form.addRow("Force Deadband (N):", self.spin_deadband)
 
         left_lay.addWidget(cfg_box)
@@ -99,9 +94,11 @@ class RaceTab(QWidget):
         right_lay.setContentsMargins(0, 0, 0, 0)
         
         self.pw_pilot = PlotWidget(figsize=(7, 6))
-        self.ax_pilot_v = self.pw_pilot.add_subplot(311)
-        self.ax_pilot_c = self.pw_pilot.add_subplot(312, sharex=self.ax_pilot_v)
-        self.ax_pilot_z = self.pw_pilot.add_subplot(313, sharex=self.ax_pilot_v)
+        gs = self.pw_pilot.figure.add_gridspec(4, 1, height_ratios=[3, 2, 2, 1], hspace=0.05)
+        self.ax_pilot_v = self.pw_pilot.figure.add_subplot(gs[0])
+        self.ax_pilot_throttle = self.pw_pilot.figure.add_subplot(gs[1], sharex=self.ax_pilot_v)
+        self.ax_pilot_brake = self.pw_pilot.figure.add_subplot(gs[2], sharex=self.ax_pilot_v)
+        self.ax_pilot_z = self.pw_pilot.figure.add_subplot(gs[3], sharex=self.ax_pilot_v)
         right_lay.addWidget(self.pw_pilot, stretch=7)
         
         self.txt_pilot_guide = QTextEdit()
@@ -160,13 +157,17 @@ class RaceTab(QWidget):
         ax_m.grid(False)
         ax_m.set_facecolor('none')
         self.pw_map.figure.patch.set_alpha(0.0)
-        self.pw_map.figure.tight_layout(pad=0)
+        try:
+            self.pw_map.figure.tight_layout(pad=0)
+        except RuntimeError:
+            pass
         self.pw_map.draw()
 
         if not has_valid_result or not self.state.vehicle:
             self.lbl_status.setText("Run Simulation to generate Pilot Reference.")
             self.ax_pilot_v.clear()
-            self.ax_pilot_c.clear()
+            self.ax_pilot_throttle.clear()
+            self.ax_pilot_brake.clear()
             self.ax_pilot_z.clear()
             self.pw_pilot.draw()
             self.txt_pilot_guide.setText("")
@@ -179,7 +180,6 @@ class RaceTab(QWidget):
             max_accel=self.spin_max_accel.value(),
             max_brake=self.spin_max_brake.value(),
             pedal_transition_time_s=self.spin_pedal_time.value(),
-            filter_window_size=self.spin_filter_window.value() if self.spin_filter_window.value() % 2 != 0 else self.spin_filter_window.value() + 1,
             force_deadband_N=self.spin_deadband.value()
         )
 
@@ -192,26 +192,54 @@ class RaceTab(QWidget):
         ctrl_p = pilot_res.control_inputs * 100.0
         zones_p = pilot_res.action_zones
 
+        max_d = d_p[-1]
+
         # 1. Velocity Trace
         ax = self.ax_pilot_v; ax.clear()
         ax.plot(d_p, v_p_kmh, color=ACCENT, linewidth=2, label="Target Speed (km/h)")
         ax.set_ylabel("Speed (km/h)")
         ax.legend(loc='upper right', fontsize=8)
-        ax.grid(True, alpha=0.3)
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(100))
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(50))
+        ax.grid(True, which='major', color='#888888', alpha=0.6, linewidth=0.8)
+        ax.grid(True, which='minor', axis='x', color='#888888', alpha=0.3, linewidth=0.5, linestyle='--')
+        ax.set_xlim(0, max_d)
+        ax.tick_params(labelbottom=False)
         ax.set_title("Pilot Reference", fontsize=10, fontweight='bold')
 
-        # 2. Control Inputs
-        ax = self.ax_pilot_c; ax.clear()
-        ax.plot(d_p, ctrl_p, color=TEXT_DIM, linewidth=1.5)
-        ax.fill_between(d_p, 0, ctrl_p, where=(ctrl_p > 0), color='#9ece6a', alpha=0.5, label="Throttle %")
-        ax.fill_between(d_p, 0, ctrl_p, where=(ctrl_p < 0), color='#f7768e', alpha=0.5, label="Brake %")
-        ax.set_ylabel("Pedal Input (%)")
-        ax.set_ylim(-110, 110)
-        ax.axhline(0, color="#737aa2", linewidth=1)
+        # 2. Throttle Input
+        ax = self.ax_pilot_throttle; ax.clear()
+        throttle_p = np.maximum(0, ctrl_p)
+        ax.plot(d_p, throttle_p, color='#9ece6a', linewidth=1.5)
+        ax.fill_between(d_p, 0, throttle_p, color='#9ece6a', alpha=0.5, label="Throttle %")
+        ax.set_ylabel("Throttle (%)")
+        ax.set_ylim(0, 110)
+        ax.set_yticks([0, 50, 100])
         ax.legend(loc='upper right', fontsize=8)
-        ax.grid(True, alpha=0.3)
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(100))
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(50))
+        ax.grid(True, which='major', color='#888888', alpha=0.6, linewidth=0.8)
+        ax.grid(True, which='minor', axis='x', color='#888888', alpha=0.3, linewidth=0.5, linestyle='--')
+        ax.set_xlim(0, max_d)
+        ax.tick_params(labelbottom=False)
 
-        # 3. Action Zones
+        # 3. Brake Input
+        ax = self.ax_pilot_brake; ax.clear()
+        brake_p = np.abs(np.minimum(0, ctrl_p))
+        ax.plot(d_p, brake_p, color='#f7768e', linewidth=1.5)
+        ax.fill_between(d_p, 0, brake_p, color='#f7768e', alpha=0.5, label="Brake %")
+        ax.set_ylabel("Brake (%)")
+        ax.set_ylim(0, 110)
+        ax.set_yticks([0, 50, 100])
+        ax.legend(loc='upper right', fontsize=8)
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(100))
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(50))
+        ax.grid(True, which='major', color='#888888', alpha=0.6, linewidth=0.8)
+        ax.grid(True, which='minor', axis='x', color='#888888', alpha=0.3, linewidth=0.5, linestyle='--')
+        ax.set_xlim(0, max_d)
+        ax.tick_params(labelbottom=False)
+
+        # 4. Action Zones
         ax = self.ax_pilot_z; ax.clear()
         color_map = {
             'ACCELERATE': '#9ece6a',
@@ -221,13 +249,22 @@ class RaceTab(QWidget):
         }
         for i in range(len(d_p) - 1):
             c = color_map.get(zones_p[i], 'gray')
-            ax.axvspan(d_p[i], d_p[i+1], color=c, alpha=0.5, lw=0)
+            ax.axvspan(d_p[i], d_p[i+1], color=c, alpha=1.0, lw=0)
         ax.set_yticks([])
         ax.set_ylabel("Action")
         ax.set_xlabel("Track Distance (m)")
-        legend_elements = [Patch(facecolor=color_map[k], alpha=0.5, label=k) for k in color_map]
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(100))
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(50))
+        ax.grid(True, which='major', axis='x', color='#888888', alpha=0.6, linewidth=0.8)
+        ax.grid(True, which='minor', axis='x', color='#888888', alpha=0.3, linewidth=0.5, linestyle='--')
+        ax.set_xlim(0, max_d)
+        for label in ax.get_xticklabels():
+            label.set_rotation(90)
+        
+        legend_elements = [Patch(facecolor=color_map[k], alpha=1.0, label=k) for k in color_map]
         ax.legend(handles=legend_elements, loc='upper right', ncol=4, fontsize=8)
 
+        self.pw_pilot.figure.align_ylabels([self.ax_pilot_v, self.ax_pilot_throttle, self.ax_pilot_brake, self.ax_pilot_z])
         self.pw_pilot.draw()
 
         # Pilot Guide Text

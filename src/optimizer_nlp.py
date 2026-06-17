@@ -35,7 +35,9 @@ from typing import Optional
 # Smooth helper functions (CasADi-compatible)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _smooth_motor_efficiency(p_mech: "ca.SX", p_rated: float) -> "ca.SX":
+def _smooth_motor_efficiency(
+    p_mech: "ca.SX", p_rated: float, eta_peak: float = 0.92, k: float = 0.08, drop_mag: float = 0.30, eta_min: float = 0.50
+) -> "ca.SX":
     """
     Smooth approximation of motor efficiency as function of mechanical
     power, suitable for CasADi symbolic graphs.
@@ -52,19 +54,14 @@ def _smooth_motor_efficiency(p_mech: "ca.SX", p_rated: float) -> "ca.SX":
     The logistic decay form keeps η_decay bounded in [1-drop_mag, 1] and
     is smooth everywhere (no kinks for IPOPT).
     """
-    eta_peak = 0.92   # Slightly above 0.90 so rational·decay ≈ 0.90 at x=1
-    eta_min = 0.50
-    k = 0.08          # Tuned for mid-range accuracy
 
     x = _smooth_abs(p_mech) / p_rated
 
-    # Rising part: 0 → eta_peak as load increases
-    eta_rise = eta_peak * x / (x + k)
+    # Rising part: eta_min → eta_peak as load increases
+    eta_rise = eta_min + (eta_peak - eta_min) * x / (x + k)
 
     # Overload decay: smoothly drops above x=1
-    # At x=2: excess=1, decay = 1 - 0.30*1/(1+1) = 0.85 → η ≈ 0.92*0.94*0.85 ≈ 0.66
     excess = _smooth_max(x - 1.0, 0.0)
-    drop_mag = 0.30
     eta_decay = 1.0 - drop_mag * excess * excess / (1.0 + excess * excess)
 
     return _smooth_max(eta_rise * eta_decay, eta_min)
@@ -125,14 +122,18 @@ class NLPOptimizer(BaseOptimizer):
         p_mech = f_total * v
 
         p_driving = ca.fmax(p_mech, 0.0)
-        eta = _smooth_motor_efficiency(p_driving, c.max_motor_power)
+        eta = _smooth_motor_efficiency(
+            p_driving, c.max_motor_power,
+            eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min
+        )
         p_elec = p_driving / (eta * c.drivetrain_efficiency)
 
         if c.regen_efficiency > 0:
             # Allow regen: p_elec can be negative
             p_regen_mech = ca.fmax(p_mech, -c.max_motor_power)
             eta_regen = _smooth_motor_efficiency(
-                _smooth_abs(p_regen_mech), c.max_motor_power
+                _smooth_abs(p_regen_mech), c.max_motor_power,
+                eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min
             )
             p_regen = p_regen_mech * eta_regen * c.drivetrain_efficiency * c.regen_efficiency
             # Use p_elec when p_mech > 0, p_regen when p_mech < 0
@@ -158,16 +159,26 @@ class NLPOptimizer(BaseOptimizer):
         total_time_expr = 0.0
         v_floor = 0.05
 
+        accels = []
         for i in range(n - 1):
             v_avg = (v[i] + v[i + 1]) / 2
             v_safe = v_avg
             accel_i = (v[i + 1] ** 2 - v[i] ** 2) / (2.0 * ds)
+            accels.append(accel_i)
             grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
 
             p_elec = self._sym_electrical_power(v_safe, accel_i, grade_i)
             dt_i = 2.0 * ds / (v[i] + v[i+1] + 1e-3)
             total_energy += p_elec * dt_i
             total_time_expr += dt_i
+            
+        # ── regularization ──────────────────────────────────────────
+        # Add a tiny jerk penalty to resolve flat regions in the objective
+        # (e.g. when braking costs 0 energy) and prevent oscillations.
+        jerk_penalty = 0.0
+        for i in range(n - 2):
+            da = accels[i+1] - accels[i]
+            jerk_penalty += da * da
 
         # ── bounds on v ─────────────────────────────────────────────
         lbv = np.zeros(n)
@@ -254,7 +265,8 @@ class NLPOptimizer(BaseOptimizer):
         v0 = np.interp(self.distances, res.distances, res.velocities)
 
         # ── create NLP and solve ────────────────────────────────────
-        nlp = {"x": v, "f": total_energy / 1000.0, "g": g_vec}
+        nlp_obj = (total_energy + self.config.jerk_penalty_weight * jerk_penalty) / 1000.0
+        nlp = {"x": v, "f": nlp_obj, "g": g_vec}
         opts = {
             "ipopt.max_iter": self.config.max_iterations,
             "ipopt.tol": self.config.tol,
@@ -263,14 +275,20 @@ class NLPOptimizer(BaseOptimizer):
             "ipopt.sb": "yes",
 
             "ipopt.mu_strategy": "adaptive",
-            "ipopt.acceptable_tol": 10.0,
-            "ipopt.acceptable_obj_change_tol": 1e-1,
-            "ipopt.acceptable_iter": 10,
+            "ipopt.acceptable_tol": self.config.acceptable_tol,
+            "ipopt.acceptable_obj_change_tol": self.config.acceptable_obj_change_tol,
+            "ipopt.acceptable_iter": self.config.acceptable_iter,
         }
         solver = ca.nlpsol("solver", "ipopt", nlp, opts)
 
         sol = solver(x0=v0, lbx=lbv, ubx=ubv, lbg=lbg, ubg=ubg)
         v_opt = np.array(sol["x"]).flatten()
+        
+        # Evaluate objective components at the solution
+        eval_fn = ca.Function('eval_obj', [v], [total_energy, jerk_penalty])
+        e_val, j_val = eval_fn(v_opt)
+        print(f"  [NLP] Final Electrical Energy Obj: {float(e_val):.2f} J")
+        print(f"  [NLP] Final Jerk Penalty Obj:      {float(j_val):.2f} (weight={self.config.jerk_penalty_weight})")
 
         # Snap stops exactly
         v_opt = self._enforce_stops(v_opt)

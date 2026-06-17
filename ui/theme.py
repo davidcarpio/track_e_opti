@@ -128,6 +128,7 @@ QComboBox QAbstractItemView {{
     border: 1px solid {BORDER};
 }}
 QLabel {{ color: {TEXT_PRIMARY}; }}
+QLabel:disabled {{ color: {TEXT_DIM}; }}
 QGroupBox {{
     border: 1px solid {BORDER}; border-radius: 6px;
     margin-top: 14px; padding-top: 18px; font-weight: 600; color: {ACCENT};
@@ -203,6 +204,7 @@ QComboBox QAbstractItemView {{
     border: 1px solid {L_BORDER};
 }}
 QLabel {{ color: {L_TEXT}; }}
+QLabel:disabled {{ color: {L_TEXT_DIM}; }}
 QGroupBox {{
     border: 1px solid {L_BORDER}; border-radius: 6px;
     margin-top: 14px; padding-top: 18px; font-weight: 600; color: {L_ACCENT};

@@ -46,6 +46,16 @@ class VehicleConfig:
     drivetrain_efficiency: float = 0.95  # Mechanical losses (chain/belt/bearings)
     regen_efficiency: float = 0.0  # Regenerative braking efficiency (0 = no regen)
     
+    # Motor efficiency curve
+    motor_eff_xp: list[float] = field(default_factory=lambda: [0.0, 0.15, 0.5, 1.0, 1.5, 2.0, 100.0])
+    motor_eff_yp: list[float] = field(default_factory=lambda: [0.50, 0.70, 0.87, 0.90, 0.80, 0.65, 0.65])
+    
+    # NLP motor efficiency curve parameters
+    nlp_eta_peak: float = 0.92
+    nlp_k: float = 0.08
+    nlp_drop_mag: float = 0.30
+    nlp_eta_min: float = 0.50
+    
     # Limits
     max_velocity: float = 40.0 / 3.6  # 40 km/h in m/s
     
@@ -60,8 +70,8 @@ class VehicleDynamics:
         self.config = config or VehicleConfig()
 
         # Precompute efficiency interpolation arrays to avoid allocation during loops
-        self._eff_xp = np.array([0.0, 0.15, 0.5, 1.0, 2.0, 100.0])
-        self._eff_yp = np.array([0.50, 0.70, 0.87, 0.90, 0.65, 0.65])
+        self._eff_xp = np.array(self.config.motor_eff_xp)
+        self._eff_yp = np.array(self.config.motor_eff_yp)
     
     def aero_drag_force(self, velocity: float) -> float:
         """
