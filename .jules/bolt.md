@@ -8,3 +8,7 @@
 ## 2025-02-23 - [np.interp for Piecewise Vectorization]
 **Learning:** Sequential boolean masking in NumPy (creating multiple `mask = ...` and assigning to `zeros_like`) generates massive temporary array allocations and bottlenecks hot loops like DP grid solvers.
 **Action:** When calculating piecewise linear functions over large arrays, replace boolean masking with `np.interp` using precomputed static class arrays (`xp`, `yp`). This moves the branching logic entirely into compiled C code, speeding up the function by up to 3x.
+
+## 2023-10-25 - [Precomputing Physical Constants out of Bisection Loops]
+**Learning:** In optimization loops containing Lagrangian bisections (like `_solve` in `DPOptimizer`), physical constraints (`valid_mask`), `seg_energy`, and `seg_time` for discrete grids are evaluated inside the iteration loop despite being independent of the Lagrangian multiplier `lam`. This forces massive redundant physical evaluations (re-running `energy_for_segment` vectorizations).
+**Action:** When a bisection loop iteratively optimizes a weight without changing grid geometry, hoist all track/vehicle physical computations into a precomputation step. Cache the boolean transition validities and energy/time values as class states. Inside the bisection, sub-mask the iterations dynamically (e.g., `valid_mask[self._pre_valid_mask[i]]`) to cleanly fetch the pre-evaluated numpy arrays.

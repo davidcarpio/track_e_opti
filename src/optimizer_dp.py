@@ -136,19 +136,114 @@ class DPOptimizer(BaseOptimizer):
 
     # ── DP solve ────────────────────────────────────────────────────
 
+
+    def _precompute_segment_data(self):
+        """
+        Precompute physical transition validities, segment energies, and segment times.
+        These properties depend only on velocity levels and track geometry, NOT on the
+        Lagrangian penalty 'lam', so they can be hoisted out of the bisection loop.
+        """
+        n = len(self.distances)
+        nv = self.num_velocity_levels
+        ds = self.ds
+        grid = self._build_velocity_grid()
+        INF = 1e18
+
+        self._pre_valid_mask = []
+        self._pre_seg_energy = []
+        self._pre_seg_time = []
+        self._pre_grid = grid
+
+        for i in range(n - 1):
+            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
+            is_stop = i in self.stop_indices
+            next_is_stop = (i + 1) in self.stop_indices
+
+            v_from = grid[i, :][:, None]  # (nv, 1)
+            v_to = grid[i + 1, :][None, :] # (1, nv)
+
+            valid_from = np.ones(nv, dtype=bool)
+            if is_stop:
+                valid_from = grid[i, :] <= 1e-6
+
+            valid_to = np.ones(nv, dtype=bool)
+            if next_is_stop:
+                valid_to = grid[i + 1, :] <= 1e-6
+
+            valid_mask = valid_from[:, None] & valid_to[None, :]
+
+            if not np.any(valid_mask):
+                self._pre_valid_mask.append(valid_mask)
+                self._pre_seg_energy.append(np.array([]))
+                self._pre_seg_time.append(np.array([]))
+                continue
+
+            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
+            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
+
+            feasible = np.ones_like(v_f_valid, dtype=bool)
+            c = self.vehicle.config
+
+            mask_acc = v_t_valid > v_f_valid
+            if np.any(mask_acc):
+                v_ref = np.maximum(v_f_valid[mask_acc], 0.01)
+                f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
+                f_motor = self.vehicle.motor_limited_force(v_ref)
+                f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
+                f_max = np.minimum(f_traction, f_motor)
+                a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
+                feasible[mask_acc] = (v_t_valid[mask_acc]**2 <= v_f_valid[mask_acc]**2 + 2.0 * a_max * ds + 1e-6)
+
+            mask_dec = v_t_valid < v_f_valid
+            if np.any(mask_dec):
+                f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
+                f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
+                a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
+                feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)
+
+            valid_mask[valid_mask] = feasible
+
+            if not np.any(valid_mask):
+                self._pre_valid_mask.append(valid_mask)
+                self._pre_seg_energy.append(np.array([]))
+                self._pre_seg_time.append(np.array([]))
+                continue
+
+            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
+            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
+
+            seg_energy = self.vehicle.energy_for_segment(v_f_valid, v_t_valid, ds, grade_i)
+
+            v_avg = (v_f_valid + v_t_valid) / 2.0
+            seg_time = np.full_like(v_avg, INF)
+            mask_avg = v_avg > 1e-6
+            seg_time[mask_avg] = ds / v_avg[mask_avg]
+
+            mask_zero_avg = ~mask_avg
+            if np.any(mask_zero_avg):
+                mask_any = (v_f_valid[mask_zero_avg] > 1e-6) | (v_t_valid[mask_zero_avg] > 1e-6)
+                if np.any(mask_any):
+                    v_f_sub = v_f_valid[mask_zero_avg][mask_any]
+                    v_t_sub = v_t_valid[mask_zero_avg][mask_any]
+                    seg_time[mask_zero_avg][mask_any] = 2.0 * ds / np.maximum(v_f_sub, v_t_sub)
+
+            self._pre_valid_mask.append(valid_mask)
+            self._pre_seg_energy.append(seg_energy)
+            self._pre_seg_time.append(seg_time)
+
     def _solve_for_lambda(self, lam: float, **kwargs) -> tuple[Optional[np.ndarray], float, float]:
         """
         Backward-induction DP over (distance, velocity) grid using a
         Lagrangian relaxation for the time constraint.
         Cost = Energy + lam * Time
-        
+
         Returns (velocities, lap_time, energy_cost).
         """
         n = len(self.distances)
         nv = self.num_velocity_levels
         ds = self.ds
 
-        grid = self._build_velocity_grid()  # (n, nv)
+        grid = getattr(self, '_pre_grid', self._build_velocity_grid())  # (n, nv)
 
         INF = 1e18
 
@@ -171,95 +266,35 @@ class DPOptimizer(BaseOptimizer):
 
         # ── backward induction ──────────────────────────────────────
         for i in range(n - 2, -1, -1):
-            grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
-            is_stop = i in self.stop_indices
-            next_is_stop = (i + 1) in self.stop_indices
-
-            # Pre-compute valid velocities for this stage
-            v_from = grid[i, :][:, None]  # (nv, 1)
-            v_to = grid[i + 1, :][None, :] # (1, nv)
-
-            # Valid rows (from) and cols (to) due to stops
-            valid_from = np.ones(nv, dtype=bool)
-            if is_stop:
-                valid_from = grid[i, :] <= 1e-6
-
-            valid_to = np.ones(nv, dtype=bool)
-            if next_is_stop:
-                valid_to = grid[i + 1, :] <= 1e-6
-
-            # Valid matrix (nv, nv)
-            valid_mask = valid_from[:, None] & valid_to[None, :]
+            valid_mask = self._pre_valid_mask[i].copy()
 
             # Future cost must be finite
             valid_mask &= (cost[i + 1, :][None, :] < INF)
 
-            # Skip heavy computation if no valid transitions
             if not np.any(valid_mask):
                 continue
 
-            # Only compute for valid pairs
-            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
-            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
+            seg_energy = self._pre_seg_energy[i]
+            seg_time = self._pre_seg_time[i]
 
-            # Feasibility check (Vectorized)
-            feasible = np.ones_like(v_f_valid, dtype=bool)
+            # Since valid_mask can be a subset of the original _pre_valid_mask[i],
+            # we need to select only the elements of seg_energy and seg_time that
+            # are still valid.
 
-            c = self.vehicle.config
-
-            mask_acc = v_t_valid > v_f_valid
-            if np.any(mask_acc):
-                v_ref = np.maximum(v_f_valid[mask_acc], 0.01)
-                f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
-                f_motor = self.vehicle.motor_limited_force(v_ref)
-                f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
-                f_max = np.minimum(f_traction, f_motor)
-                a_max = (f_max - f_resist) / c.mass * self.config.traction_fos
-                feasible[mask_acc] = (v_t_valid[mask_acc]**2 <= v_f_valid[mask_acc]**2 + 2.0 * a_max * ds + 1e-6)
-
-            mask_dec = v_t_valid < v_f_valid
-            if np.any(mask_dec):
-                f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
-                f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
-                a_brake = (f_brake_tire + f_resist) / c.mass * self.config.traction_fos
-                feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)
-
-            valid_mask[valid_mask] = feasible
-
-            # Skip if still no valid pairs
-            if not np.any(valid_mask):
-                continue
-
-            # Compute segment energy and time
-            v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
-            v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
-
-            seg_energy = self.vehicle.energy_for_segment(v_f_valid, v_t_valid, ds, grade_i)
-
-            v_avg = (v_f_valid + v_t_valid) / 2.0
-            seg_time = np.full_like(v_avg, INF)
-            mask_avg = v_avg > 1e-6
-            seg_time[mask_avg] = ds / v_avg[mask_avg]
-
-            mask_zero_avg = ~mask_avg
-            if np.any(mask_zero_avg):
-                mask_any = (v_f_valid[mask_zero_avg] > 1e-6) | (v_t_valid[mask_zero_avg] > 1e-6)
-                if np.any(mask_any):
-                    # For elements where at least one is > 1e-6
-                    v_f_sub = v_f_valid[mask_zero_avg][mask_any]
-                    v_t_sub = v_t_valid[mask_zero_avg][mask_any]
-                    seg_time[mask_zero_avg][mask_any] = 2.0 * ds / np.maximum(v_f_sub, v_t_sub)
+            # Find which elements of the original valid mask are still valid
+            sub_mask = valid_mask[self._pre_valid_mask[i]]
 
             # Compute candidates
             next_cost = np.broadcast_to(cost[i + 1, :][None, :], (nv, nv))[valid_mask]
-            candidates = seg_energy + lam * seg_time + next_cost
+
+            candidates = seg_energy[sub_mask] + lam * seg_time[sub_mask] + next_cost
 
             # Full candidate matrix initialized to INF
             full_candidates = np.full((nv, nv), INF)
             full_candidates[valid_mask] = candidates
 
             full_seg_time = np.full((nv, nv), INF)
-            full_seg_time[valid_mask] = seg_time
+            full_seg_time[valid_mask] = seg_time[sub_mask]
 
             # Find minimum cost for each 'from' state
             best_costs = np.min(full_candidates, axis=1)
@@ -321,6 +356,9 @@ class DPOptimizer(BaseOptimizer):
         """
         T_max = self.config.max_lap_time
         
+        # Precompute segment data once
+        self._precompute_segment_data()
+
         # 1. Try with no penalty (lam = 0)
         v_fastest, t_fastest, _ = self._solve_for_lambda(0.0, **kwargs)
         if v_fastest is None:
