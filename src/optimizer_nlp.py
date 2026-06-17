@@ -248,21 +248,45 @@ class NLPOptimizer(BaseOptimizer):
 
         g_vec = ca.vertcat(*g)
 
-        # ── initial guess: feasible from greedy-style heuristic ─────
-        # Use robust optimal initial guess to help IPOPT converge.
-        # To save time, we run a coarse DP solve and interpolate, rather
-        # than running a full DP solve at the NLP's high resolution.
-        import copy
-        from .optimizer_dp import DPOptimizer
-        
-        coarse_config = copy.deepcopy(self.config)
-        coarse_config.num_nodes = min(100, self.config.num_nodes)
-        
-        dp = DPOptimizer(self.track, self.vehicle, coarse_config)
-        res = dp.optimize()
-        
-        # Interpolate the coarse DP velocity profile to our NLP grid
-        v0 = np.interp(self.distances, res.distances, res.velocities)
+        # ── initial guess ───────────────────────────────────────────
+        strategy = self.config.nlp_initial_guess
+        print(f"  [NLP] Initial guess strategy: {strategy}")
+
+        if strategy == "dp":
+            # Coarse DP solve → interpolate to NLP grid (original behaviour)
+            import copy
+            from .optimizer_dp import DPOptimizer
+
+            coarse_config = copy.deepcopy(self.config)
+            coarse_config.num_nodes = min(100, self.config.num_nodes)
+
+            dp = DPOptimizer(self.track, self.vehicle, coarse_config)
+            res = dp.optimize()
+
+            v0 = np.interp(self.distances, res.distances, res.velocities)
+
+        elif strategy == "heuristic":
+            # Forward/backward feasibility pass on a target-speed profile.
+            # Starts from v_target = distance / T_max, clips to v_max,
+            # then trims by traction and braking envelopes.
+            v_target = self.track.total_distance / self.config.max_lap_time
+            v0 = np.minimum(self.v_max, v_target * 1.1)
+            v0 = self._forward_pass(v0)
+            v0 = self._backward_pass(v0)
+
+        elif strategy == "constant":
+            # Flat constant-speed profile at distance/T_max, clipped to
+            # v_max.  Most neutral start — lets IPOPT explore freely.
+            v_target = self.track.total_distance / self.config.max_lap_time
+            v0 = np.minimum(self.v_max, np.full(n, v_target))
+            # Enforce stop nodes
+            v0 = self._enforce_stops(v0)
+
+        else:
+            raise ValueError(
+                f"Unknown nlp_initial_guess strategy: {strategy!r}. "
+                "Choose 'dp', 'heuristic', or 'constant'."
+            )
 
         # ── create NLP and solve ────────────────────────────────────
         nlp_obj = (total_energy + self.config.jerk_penalty_weight * jerk_penalty) / 1000.0

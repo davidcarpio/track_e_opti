@@ -46,6 +46,9 @@ class OptimizationConfig:
     # Factor of Safety (FoS) on traction / braking limits
     traction_fos: float = 0.9
 
+    # NLP initial-guess strategy: "dp", "heuristic", or "constant"
+    nlp_initial_guess: str = "dp"
+
 
 @dataclass
 class OptimizationResult:
