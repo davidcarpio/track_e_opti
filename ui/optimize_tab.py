@@ -128,6 +128,12 @@ class OptimizeTab(QWidget):
         self.edit_jerk = QLineEdit("1000.0")
         adv_form.addRow("Jerk Penalty Wt:", self.edit_jerk)
 
+        self.combo_guess = QComboBox()
+        self.combo_guess.addItem("DP (default)", "dp")
+        self.combo_guess.addItem("Heuristic", "heuristic")
+        self.combo_guess.addItem("Constant Speed", "constant")
+        adv_form.addRow("NLP Init Guess:", self.combo_guess)
+
         self.spin_fos = QSpinBox()
         self.spin_fos.setRange(10, 100)
         self.spin_fos.setValue(90)
@@ -138,7 +144,7 @@ class OptimizeTab(QWidget):
         
         def _toggle_adv():
             is_nlp = self.combo_method.currentData() == "nlp"
-            for row in range(5):  # First 5 rows are NLP-specific
+            for row in range(6):  # First 6 rows are NLP-specific
                 label_item = adv_form.itemAt(row, QFormLayout.ItemRole.LabelRole)
                 field_item = adv_form.itemAt(row, QFormLayout.ItemRole.FieldRole)
                 if label_item and label_item.widget():
@@ -407,7 +413,8 @@ class OptimizeTab(QWidget):
             acceptable_obj_change_tol=acc_obj,
             acceptable_iter=self.spin_acc_iter.value(),
             jerk_penalty_weight=jerk_wt,
-            traction_fos=self.spin_fos.value() / 100.0
+            traction_fos=self.spin_fos.value() / 100.0,
+            nlp_initial_guess=self.combo_guess.currentData(),
         )
         method = self.combo_method.currentData()
 
