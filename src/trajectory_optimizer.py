@@ -156,7 +156,7 @@ def optimize_trajectory(
     vehicle = VehicleDynamics(vehicle_config or VehicleConfig())
 
     opt_config = OptimizationConfig()
-    if stop_distances:
+    if stop_distances is not None:
         opt_config.stop_distances = stop_distances
     else:
         opt_config.stop_distances = track.get_worst_case_stop_locations()

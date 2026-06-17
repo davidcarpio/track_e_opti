@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QSpinBox, QLineEdit, QPushButton, QGroupBox, QFormLayout,
+    QSpinBox, QDoubleSpinBox, QLineEdit, QPushButton, QGroupBox, QFormLayout,
     QSplitter, QTabWidget, QGridLayout, QFileDialog, QMessageBox,
     QTextEdit,
 )
@@ -75,8 +75,33 @@ class OptimizeTab(QWidget):
 
         # stops override
         self.edit_stops = QLineEdit()
-        self.edit_stops.setPlaceholderText("auto (leave empty)")
+        self.edit_stops.setPlaceholderText("auto (leave empty) or 'none' for 0 stops")
         form.addRow("Stops (m):", self.edit_stops)
+
+        # Laps and Time
+        self.spin_laps = QSpinBox()
+        self.spin_laps.setRange(1, 100)
+        self.spin_laps.setValue(4)  # 4 laps for US/Lusail
+        form.addRow("Number of Laps:", self.spin_laps)
+
+        self.spin_race_time = QDoubleSpinBox()
+        self.spin_race_time.setRange(1.0, 1000.0)
+        self.spin_race_time.setValue(35.0)  # 35 mins
+        self.spin_race_time.setSuffix(" mins")
+        self.spin_race_time.setSingleStep(1.0)
+        form.addRow("Total Race Time:", self.spin_race_time)
+
+        # Derived constraints display
+        self.lbl_target_dist = QLabel("— m")
+        self.lbl_target_dist.setStyleSheet(f"color: {TEXT_DIM};")
+        form.addRow("Target Distance:", self.lbl_target_dist)
+
+        self.lbl_req_speed = QLabel("— km/h")
+        self.lbl_req_speed.setStyleSheet(f"color: {TEXT_DIM};")
+        form.addRow("Req. Avg Speed:", self.lbl_req_speed)
+
+        self.spin_laps.valueChanged.connect(self._update_derived_constraints)
+        self.spin_race_time.valueChanged.connect(self._update_derived_constraints)
 
         left_lay.addWidget(cfg_box)
 
@@ -99,7 +124,7 @@ class OptimizeTab(QWidget):
         self.spin_acc_iter.setValue(10)
         adv_form.addRow("Acc. Iterations:", self.spin_acc_iter)
 
-        self.edit_jerk = QLineEdit("1e-2")
+        self.edit_jerk = QLineEdit("1000.0")
         adv_form.addRow("Jerk Penalty Wt:", self.edit_jerk)
 
         self.spin_fos = QSpinBox()
@@ -230,6 +255,105 @@ class OptimizeTab(QWidget):
         splitter.setStretchFactor(1, 7)
         root.addWidget(splitter)
 
+    #    lifecycle    
+
+    def showEvent(self, event):
+        """Called when the tab becomes visible."""
+        super().showEvent(event)
+        self._update_derived_constraints()
+        if (getattr(self.state, 'last_result', None) is not self._result or 
+            self.state.track is not self._track_for_result):
+            self.load_state_result()
+
+    def _update_derived_constraints(self):
+        """Update the read-only labels showing derived constraints."""
+        track = self.state.track
+        if not track:
+            self.lbl_target_dist.setText("— m")
+            self.lbl_req_speed.setText("— km/h")
+            return
+            
+        laps = self.spin_laps.value()
+        time_mins = self.spin_race_time.value()
+        
+        total_dist = track.total_distance * laps
+        time_s = time_mins * 60.0
+        
+        if time_s > 0:
+            req_speed_ms = total_dist / time_s
+            req_speed_kmh = req_speed_ms * 3.6
+        else:
+            req_speed_kmh = 0.0
+            
+        self.lbl_target_dist.setText(f"{total_dist:.0f} m")
+        self.lbl_req_speed.setText(f"{req_speed_kmh:.1f} km/h")
+
+    def load_state_result(self):
+        result = getattr(self.state, 'last_result', None)
+        track = self.state.track
+        
+        self._result = result
+        self._track_for_result = track
+
+        if result and track:
+            self.btn_export.setEnabled(True)
+            self.btn_save_default.setEnabled(True)
+
+            track_km = track.total_distance / 1000
+            e_kwh = result.total_energy / 3600 / 1000
+            km_kwh = track_km / e_kwh if e_kwh > 0 else 0
+
+            msg = (f"Loaded: {result.total_energy / 3600:.2f} Wh, "
+                   f"{result.total_time:.1f} s, "
+                   f"{km_kwh:.0f} km/kWh")
+            self.lbl_status.setText(msg)
+            self.lbl_status.setStyleSheet(f"color: {SUCCESS};")
+            self.state.set_status(msg)
+
+            self._summary["Energy"].setText(f"{result.total_energy / 3600:.4f}")
+            self._summary["Lap Time"].setText(f"{result.total_time:.1f}")
+            self._summary["Peak Power"].setText(f"{result.peak_power:.0f}")
+            self._summary["Peak Force"].setText(f"{result.peak_force:.0f}")
+            self._summary["Avg Speed"].setText(f"{result.avg_velocity * 3.6:.1f}")
+            self._summary["Efficiency"].setText(f"{km_kwh:.0f}")
+
+            self._draw_plots(track, result)
+        else:
+            self.btn_export.setEnabled(False)
+            self.btn_save_default.setEnabled(False)
+            self.lbl_status.setText("No simulation loaded.")
+            self.lbl_status.setStyleSheet(f"color: {TEXT_DIM};")
+            
+            for key in self._summary:
+                self._summary[key].setText("—")
+                
+            self.ax_vel.clear(); self.pw_vel.draw()
+            self.ax_force.clear(); self.pw_force.draw()
+            self.ax_energy.clear(); self.pw_energy.draw()
+            self.ax_losses.clear(); self.pw_losses.draw()
+            self.ax_accel.clear(); self.pw_accel.draw()
+            
+            self.lbl_loss_aero.setText("Aero: —")
+            self.lbl_loss_rolling.setText("Rolling: —")
+            self.lbl_loss_grade.setText("Grade (Up): —")
+            self.lbl_loss_drivetrain.setText("Drivetrain Loss: —")
+            self.lbl_loss_braking.setText("Mech Braking: —")
+            self.lbl_pot_grade.setText("Downhill Grade: —")
+            self.lbl_pot_kinetic.setText("Kinetic Braking: —")
+            self.lbl_pot_regen.setText("Regen Recovered: —")
+            
+            self.pw_map.clear()
+            ax = self.pw_map.add_subplot(111)
+            self.ax_map = ax
+            if track:
+                xs = np.array([p.x for p in track.points])
+                ys = np.array([p.y for p in track.points])
+                ax.plot(xs, ys, color=TEXT_DIM, linewidth=1.6)
+            ax.set_aspect("equal")
+            ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
+            ax.set_title("Racetrack", fontsize=10, fontweight="bold")
+            self.pw_map.draw()
+
     #    run    
 
     def _run(self):
@@ -245,12 +369,15 @@ class OptimizeTab(QWidget):
         # parse stops
         stops_text = self.edit_stops.text().strip()
         if stops_text:
-            try:
-                stop_distances = [float(x) for x in stops_text.split(",")]
-            except ValueError:
-                self.lbl_status.setText("Invalid stops format.")
-                self.lbl_status.setStyleSheet(f"color: {ERROR};")
-                return
+            if stops_text.lower() == "none":
+                stop_distances = []
+            else:
+                try:
+                    stop_distances = [float(x) for x in stops_text.split(",")]
+                except ValueError:
+                    self.lbl_status.setText("Invalid stops format.")
+                    self.lbl_status.setStyleSheet(f"color: {ERROR};")
+                    return
         else:
             stop_distances = list(self.state.stop_distances)
 
@@ -264,10 +391,15 @@ class OptimizeTab(QWidget):
             self.lbl_status.setText("Invalid advanced parameter format.")
             self.lbl_status.setStyleSheet(f"color: {ERROR};")
             return
+            
+        time_s = self.spin_race_time.value() * 60.0
+        laps = self.spin_laps.value()
+        max_lap_time = time_s / laps if laps > 0 else 0
 
         config = OptimizationConfig(
             num_nodes=self.spin_nodes.value(),
             stop_distances=stop_distances,
+            max_lap_time=max_lap_time,
             max_iterations=self.spin_iters.value(),
             tol=tol,
             acceptable_tol=acc_tol,
@@ -349,31 +481,6 @@ class OptimizeTab(QWidget):
         ax.set_xlabel("Distance (m)")
         ax.set_title("Velocity Profile", fontsize=10, fontweight="bold")
         ax.grid(True, alpha=0.3)
-
-        if not hasattr(self, "ax_vel_accel"):
-            self.ax_vel_accel = ax.twinx()
-        else:
-            self.ax_vel_accel.clear()
-        ax_accel2 = self.ax_vel_accel
-
-        # plot acceleration on twin axis
-        accel = r.accelerations
-        force = r.force_traction
-        eps = 1.0  # 1 N threshold
-
-        mask_intent_accel = (accel > 0) & (force > eps)
-        mask_intent_brake = (accel < 0) & (force < -eps)
-        mask_unintent = (np.abs(accel) > 1e-5) & ~(mask_intent_accel | mask_intent_brake)
-
-        ax_accel2.fill_between(r.distances, 0, accel, where=mask_intent_accel,
-                               color="green", alpha=0.15, zorder=1)
-        ax_accel2.fill_between(r.distances, 0, accel, where=mask_intent_brake,
-                               color="red", alpha=0.15, zorder=1)
-        ax_accel2.fill_between(r.distances, 0, accel, where=mask_unintent,
-                               color="gray", alpha=0.2, zorder=1)
-        ax_accel2.plot(r.distances, accel, color="#737aa2", linewidth=0.8, alpha=0.5, zorder=1)
-        ax_accel2.set_ylabel("Accel (m/s²)", color=TEXT_DIM)
-        ax_accel2.tick_params(axis='y', colors=TEXT_DIM)
 
         self.pw_vel.draw()
 
