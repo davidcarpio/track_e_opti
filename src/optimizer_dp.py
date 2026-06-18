@@ -202,29 +202,51 @@ class DPOptimizer(BaseOptimizer):
             v_f_valid = np.broadcast_to(v_from, (nv, nv))[valid_mask]
             v_t_valid = np.broadcast_to(v_to, (nv, nv))[valid_mask]
 
-            # Feasibility check (Vectorized)
-            feasible = np.ones_like(v_f_valid, dtype=bool)
-
+            # Feasibility check (Vectorized using 1D arrays to avoid O(nv^2) calculations)
             c = self.vehicle.config
 
-            mask_acc = v_t_valid > v_f_valid
-            if np.any(mask_acc):
-                v_ref = np.maximum(v_f_valid[mask_acc], 0.01)
-                f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
-                f_motor = self.vehicle.motor_limited_force(v_ref)
-                f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
-                f_max = np.minimum(f_traction * self.config.traction_fos, f_motor)
-                a_max = (f_max - f_resist) / c.mass
-                feasible[mask_acc] = (v_t_valid[mask_acc]**2 <= v_f_valid[mask_acc]**2 + 2.0 * a_max * ds + 1e-6)
+            # Extract 1D arrays for from and to velocities
+            v_f_1d = grid[i, :]
+            v_t_1d = grid[i + 1, :]
 
-            mask_dec = v_t_valid < v_f_valid
-            if np.any(mask_dec):
-                f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
-                f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
-                a_brake = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
-                feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)
+            # Max acceleration limits (1D based on v_from)
+            v_ref_acc = np.maximum(v_f_1d, 0.01)
+            f_traction_acc = self.vehicle.max_traction_force(v_ref_acc, grade_i)
+            f_motor_acc = self.vehicle.motor_limited_force(v_ref_acc)
+            f_resist_acc = self.vehicle.total_resistance_force(v_ref_acc, grade_i)
+            f_max_acc = np.minimum(f_traction_acc * self.config.traction_fos, f_motor_acc)
+            a_max = (f_max_acc - f_resist_acc) / c.mass
 
-            valid_mask[valid_mask] = feasible
+            # Max braking limits (1D based on v_from)
+            f_brake_tire = self.vehicle.max_traction_force(v_f_1d, grade_i)
+            f_resist_brake = self.vehicle.total_resistance_force(v_f_1d, grade_i)
+            a_brake = (f_brake_tire * self.config.traction_fos + f_resist_brake) / c.mass
+
+            # Precompute squares
+            v_f_sq = v_f_1d**2
+            v_t_sq = v_t_1d**2
+
+            # Compute feasible target velocity squared limits based on acceleration limits
+            max_vt_sq_acc = v_f_sq + 2.0 * a_max * ds + 1e-6
+            min_vt_sq_dec = v_f_sq - 2.0 * a_brake * ds - 1e-6
+
+            # Broadcast to 2D
+            v_f_sq_2d = v_f_sq[:, None]
+            max_vt_sq_acc_2d = max_vt_sq_acc[:, None]
+            min_vt_sq_dec_2d = min_vt_sq_dec[:, None]
+            v_t_sq_2d = v_t_sq[None, :]
+
+            v_f_2d = v_f_1d[:, None]
+            v_t_2d = v_t_1d[None, :]
+
+            feasible_acc = (v_t_2d > v_f_2d) & (v_t_sq_2d <= max_vt_sq_acc_2d)
+            feasible_dec = (v_t_2d < v_f_2d) & (v_t_sq_2d >= min_vt_sq_dec_2d)
+            feasible_eq = (v_t_2d == v_f_2d)
+
+            feasible_2d = feasible_acc | feasible_dec | feasible_eq
+
+            # Apply to valid mask (feasible_2d is (nv, nv))
+            valid_mask &= feasible_2d
 
             # Skip if still no valid pairs
             if not np.any(valid_mask):
