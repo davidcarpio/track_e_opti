@@ -8,3 +8,6 @@
 ## 2025-02-23 - [np.interp for Piecewise Vectorization]
 **Learning:** Sequential boolean masking in NumPy (creating multiple `mask = ...` and assigning to `zeros_like`) generates massive temporary array allocations and bottlenecks hot loops like DP grid solvers.
 **Action:** When calculating piecewise linear functions over large arrays, replace boolean masking with `np.interp` using precomputed static class arrays (`xp`, `yp`). This moves the branching logic entirely into compiled C code, speeding up the function by up to 3x.
+## 2026-06-18 - [O(N) physics pre-calculation for DP grid]
+**Learning:** In the Dynamic Programming optimizer, computing physics limits (like maximum traction and aerodynamic drag) directly on a broadcasted 2D (nv x nv) matrix results in O(N^2) redundant calculations. Because the maximum acceleration and deceleration limits from a specific state only depend on the starting velocity (`v_from`), they can be computed on a 1D array first.
+**Action:** Always compute state-dependent physical limits on 1D arrays *before* broadcasting constraints to a 2D transition matrix to dramatically improve inner loop performance.
