@@ -5,7 +5,7 @@ Source package containing vehicle modelling, track analysis,
 trajectory optimization, and visualization modules.
 """
 
-from .vehicle_model import VehicleConfig, VehicleDynamics
+from .vehicle_model import VehicleConfig, VehicleDynamics, VehicleCategory, DriveConfig
 from .track_analysis import Track, TrackPoint, TrackSegment, analyze_track
 from .optimizer_base import (
     BaseOptimizer,

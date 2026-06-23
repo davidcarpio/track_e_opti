@@ -102,9 +102,9 @@ class DPOptimizer(BaseOptimizer):
         ds = self.ds
 
         if v_to > v_from:
-            # Acceleration: check traction + motor limits
+            # Acceleration: check driven-wheel traction + motor limits
             v_ref = max(v_from, 0.01)
-            f_traction = self.vehicle.max_traction_force(v_ref, grade)
+            f_traction = self.vehicle.max_drive_force(v_ref, grade)
             f_motor = self.vehicle.motor_limited_force(v_ref)
             f_resist = self.vehicle.total_resistance_force(v_ref, grade)
             f_max = min(f_traction * self.config.traction_fos, f_motor)
@@ -114,8 +114,8 @@ class DPOptimizer(BaseOptimizer):
             if v_to ** 2 > v_from ** 2 + 2.0 * a_max * ds + 1e-6:
                 return False
         elif v_to < v_from:
-            # Deceleration: check braking limit
-            f_brake_tire = self.vehicle.max_traction_force(v_from, grade)
+            # Deceleration: check braking limit (all wheels)
+            f_brake_tire = self.vehicle.max_braking_force(v_from, grade)
             f_resist = self.vehicle.total_resistance_force(v_from, grade)
             a_brake = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
             # Can we brake? v_from² - v_to² ≤ 2·a_brake·ds
@@ -210,7 +210,7 @@ class DPOptimizer(BaseOptimizer):
             mask_acc = v_t_valid > v_f_valid
             if np.any(mask_acc):
                 v_ref = np.maximum(v_f_valid[mask_acc], 0.01)
-                f_traction = self.vehicle.max_traction_force(v_ref, grade_i)
+                f_traction = self.vehicle.max_drive_force(v_ref, grade_i)
                 f_motor = self.vehicle.motor_limited_force(v_ref)
                 f_resist = self.vehicle.total_resistance_force(v_ref, grade_i)
                 f_max = np.minimum(f_traction * self.config.traction_fos, f_motor)
@@ -219,7 +219,7 @@ class DPOptimizer(BaseOptimizer):
 
             mask_dec = v_t_valid < v_f_valid
             if np.any(mask_dec):
-                f_brake_tire = self.vehicle.max_traction_force(v_f_valid[mask_dec], grade_i)
+                f_brake_tire = self.vehicle.max_braking_force(v_f_valid[mask_dec], grade_i)
                 f_resist = self.vehicle.total_resistance_force(v_f_valid[mask_dec], grade_i)
                 a_brake = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
                 feasible[mask_dec] = (v_f_valid[mask_dec]**2 - v_t_valid[mask_dec]**2 <= 2.0 * a_brake * ds + 1e-6)

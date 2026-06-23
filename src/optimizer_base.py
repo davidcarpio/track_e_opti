@@ -251,14 +251,14 @@ class BaseOptimizer(ABC):
     # ── feasibility passes ──────────────────────────────────────────
 
     def _forward_pass(self, v_initial: np.ndarray) -> np.ndarray:
-        """Forward integration: limit acceleration to traction/motor."""
+        """Forward integration: limit acceleration to driven-wheel traction/motor."""
         v = v_initial.copy()
         c = self.vehicle.config
 
         for i in range(1, len(v)):
             grade = (self.grades[i-1] + self.grades[i]) / 2.0
 
-            f_traction = self.vehicle.max_traction_force(v[i - 1], grade)
+            f_traction = self.vehicle.max_drive_force(v[i - 1], grade)
             f_resist = self.vehicle.total_resistance_force(v[i - 1], grade)
             f_motor = self.vehicle.motor_limited_force(v[i - 1])
             f_max = min(f_traction * self.config.traction_fos, f_motor)
@@ -289,7 +289,7 @@ class BaseOptimizer(ABC):
 
             # Evaluate braking budget at current v[i] (upper bound)
             v_eval = v[i]
-            f_brake = self.vehicle.max_traction_force(v_eval, grade)
+            f_brake = self.vehicle.max_braking_force(v_eval, grade)
             f_resist = self.vehicle.total_resistance_force(v_eval, grade)
             a_brake = (f_brake * self.config.traction_fos + f_resist) / c.mass
 
@@ -299,7 +299,7 @@ class BaseOptimizer(ABC):
             # Refine once: re-evaluate forces at the (now clamped) v[i]
             if v[i] < v_eval:
                 v_eval = v[i]
-                f_brake = self.vehicle.max_traction_force(v_eval, grade)
+                f_brake = self.vehicle.max_braking_force(v_eval, grade)
                 f_resist = self.vehicle.total_resistance_force(v_eval, grade)
                 a_brake = (f_brake * self.config.traction_fos + f_resist) / c.mass
                 v_max_brake = np.sqrt(max(v[i + 1] ** 2 + 2 * a_brake * self.ds, 0))

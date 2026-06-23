@@ -26,7 +26,7 @@ except ImportError:
     _HAS_CASADI = False
 
 from .optimizer_base import BaseOptimizer, OptimizationConfig, OptimizationResult
-from .vehicle_model import VehicleDynamics
+from .vehicle_model import VehicleDynamics, DriveConfig
 from .track_analysis import Track
 from typing import Optional
 
@@ -111,6 +111,41 @@ class NLPOptimizer(BaseOptimizer):
         f_rr = crr_eff * normal
         f_grade = c.mass * c.gravity * np.sin(np.arctan(grade))
         return f_drag + f_rr + f_grade
+
+    def _sym_max_drive_force(self, v: "ca.SX", grade: float) -> "ca.SX":
+        """Maximum drive force from driven wheel(s) as CasADi expression.
+
+        Computes per-axle normal force with static weight distribution
+        (load transfer during acceleration is omitted in the constraint
+        to keep the NLP formulation simpler — this is conservative).
+        """
+        c = self.vehicle.config
+        cos_theta = float(np.cos(np.arctan(grade)))
+        W = c.mass * c.gravity * cos_theta
+        downforce = -0.5 * c.rho * c.cl * c.frontal_area * v * v
+        f = c.weight_dist_front
+
+        N_front = W * f + downforce * f
+        N_rear = W * (1.0 - f) + downforce * (1.0 - f)
+
+        if c.driven_wheels == DriveConfig.REAR_SINGLE:
+            N_driven = N_rear / c.num_rear_wheels
+        elif c.driven_wheels == DriveConfig.REAR_PAIR:
+            N_driven = N_rear
+        elif c.driven_wheels == DriveConfig.FRONT_PAIR:
+            N_driven = N_front
+        else:  # ALL_WHEELS
+            N_driven = N_front + N_rear
+
+        return c.mu_tire * N_driven
+
+    def _sym_max_braking_force(self, v: "ca.SX", grade: float) -> "ca.SX":
+        """Maximum braking force from all wheels as CasADi expression."""
+        c = self.vehicle.config
+        cos_theta = float(np.cos(np.arctan(grade)))
+        weight_n = c.mass * c.gravity * cos_theta
+        downforce = -0.5 * c.rho * c.cl * c.frontal_area * v * v
+        return c.mu_tire * (weight_n + downforce)
 
     def _sym_electrical_power(
         self, v: "ca.SX", accel: "ca.SX", grade: float
@@ -198,16 +233,13 @@ class NLPOptimizer(BaseOptimizer):
         lbg.append(0.0)
         ubg.append(float(self.config.max_lap_time) / 100.0)
 
-        # 2) Acceleration feasibility (traction + motor limit)
+        # 2) Acceleration feasibility (driven-wheel traction + motor limit)
         for i in range(n - 1):
             grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             v_prev = v[i]
 
             # Forward: (v[i+1]² - v[i]²) / (2·ds) ≤ a_max
-            f_trac = c.mu_tire * (
-                c.mass * c.gravity * np.cos(np.arctan(grade_i))
-                + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_prev * v_prev
-            )
+            f_trac = self._sym_max_drive_force(v_prev, grade_i)
             f_motor = c.max_motor_power / _smooth_max(v_prev, 0.5)
             f_max = -_smooth_max(-f_trac * self.config.traction_fos, -f_motor)
             f_resist = self._sym_resistance_force(v_prev, grade_i)
@@ -218,15 +250,12 @@ class NLPOptimizer(BaseOptimizer):
             lbg.append(-1e10)
             ubg.append(0.0)
 
-        # 3) Braking feasibility
+        # 3) Braking feasibility (all wheels)
         for i in range(n - 1):
             grade_i = float((self.grades[i] + self.grades[i+1]) / 2.0)
             v_next = v[i + 1]
 
-            f_brake_tire = c.mu_tire * (
-                c.mass * c.gravity * np.cos(np.arctan(grade_i))
-                + 0.5 * c.rho * (-c.cl) * c.frontal_area * v_next * v_next
-            )
+            f_brake_tire = self._sym_max_braking_force(v_next, grade_i)
             f_resist = self._sym_resistance_force(v_next, grade_i)
             a_decel_max = (f_brake_tire * self.config.traction_fos + f_resist) / c.mass
 
