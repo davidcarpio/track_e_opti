@@ -82,12 +82,12 @@ class OptimizeTab(QWidget):
         # Laps and Time
         self.spin_laps = QSpinBox()
         self.spin_laps.setRange(1, 100)
-        self.spin_laps.setValue(4)  # 4 laps for US/Lusail
+        self.spin_laps.setValue(7)  # 7 laps for Urban Concept (SEM EU 2025)
         form.addRow("Number of Laps:", self.spin_laps)
 
         self.spin_race_time = QDoubleSpinBox()
         self.spin_race_time.setRange(1.0, 1000.0)
-        self.spin_race_time.setValue(35.0)  # 35 mins
+        self.spin_race_time.setValue(20.0)  # 20 mins (SEM Urban Concept)
         self.spin_race_time.setSuffix(" mins")
         self.spin_race_time.setSingleStep(1.0)
         form.addRow("Total Race Time:", self.spin_race_time)
@@ -480,19 +480,43 @@ class OptimizeTab(QWidget):
         apply_mpl_theme()
         stops = self._last_run_stops if self._last_run_stops is not None else self.state.stop_distances
 
-        # velocity
+        # velocity + grade overlay
         ax = self.ax_vel; ax.clear()
 
-        # velocity on primary axis
-        ax.plot(r.distances, r.velocities * 3.6, color=ACCENT, linewidth=1.5, zorder=3)
+        # Grade shading — uphill = warm red, downhill = cool green
+        grades = np.interp(r.distances, track._distances_arr, track._grades_arr)
+        uphill   = np.maximum(grades, 0)
+        downhill = np.minimum(grades, 0)
+        grade_scale = 100.0  # scale: 1% grade -> 1 km/h band height for visibility
+        v_base = np.zeros_like(r.distances)
+        ax.fill_between(r.distances, v_base, uphill   * grade_scale,
+                        color="#f7768e", alpha=0.18, label="Uphill grade", zorder=1)
+        ax.fill_between(r.distances, v_base, downhill * grade_scale,
+                        color="#9ece6a", alpha=0.18, label="Downhill grade", zorder=1)
+
+        # Velocity on primary axis
+        ax.plot(r.distances, r.velocities * 3.6, color=ACCENT, linewidth=1.5, zorder=3,
+                label="Velocity")
+
+        # Coasting segments — where electrical power <= 0 (motor off)
+        coasting = r.power_electrical <= 0.01
+        coast_v = np.where(coasting, r.velocities * 3.6, np.nan)
+        ax.plot(r.distances, coast_v, color="#e0af68", linewidth=3, alpha=0.6,
+                zorder=4, label="Coasting (motor off)")
+
         for s in stops:
             ax.axvline(s, color="#f7768e", ls=":", alpha=0.5, zorder=2)
+
         ax.set_ylabel("Velocity (km/h)")
         ax.set_xlabel("Distance (m)")
-        ax.set_title("Velocity Profile", fontsize=10, fontweight="bold")
+        avg_kmh = r.avg_velocity * 3.6
+        ax.set_title(f"Velocity Profile  (avg {avg_kmh:.1f} km/h)",
+                     fontsize=10, fontweight="bold")
+        ax.legend(fontsize=7, loc="upper right", ncol=2)
         ax.grid(True, alpha=0.3)
 
         self.pw_vel.draw()
+
 
         # forces (longitudinal + lateral)
         ax = self.ax_force; ax.clear()
