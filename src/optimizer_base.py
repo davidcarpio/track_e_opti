@@ -212,14 +212,14 @@ class BaseOptimizer(ABC):
     # ── velocity envelope ───────────────────────────────────────────
 
     def _compute_velocity_limits(self):
-        """Compute maximum velocity at each point from cornering and motor-power limits.
+        """Compute maximum velocity at each point from cornering limits.
 
-        Three limits are applied at every node:
+        Two limits are applied at every node:
         1. Lateral grip (cornering): v²/R ≤ μ·N/m
         2. Rollover (narrow vehicles): v²/R ≤ g·(t/2)/h_cg
-        3. Motor power (hills/straights): the highest steady-state speed the
-           motor can maintain against total resistance at the local grade.
-           This is the key factor producing hill-based velocity variation.
+
+        Note: grade-dependent energy cost is handled by the optimizer's
+        cost function, not by capping v_max here.
         """
         self.v_max = np.zeros(len(self.distances))
 
@@ -227,10 +227,8 @@ class BaseOptimizer(ABC):
             v_corner = self.vehicle.max_cornering_velocity(r, g)
             # v_max ∝ √(μ·g·R), so a force-level FoS on μ translates to
             # √FoS on velocity.  E.g. FoS=0.9 → v_limit = 0.949·v_corner.
-            v_motor = self._motor_power_limited_speed(g)
             self.v_max[i] = min(
                 v_corner * np.sqrt(self.config.traction_fos),
-                v_motor,
                 self.config.max_velocity,
             )
 

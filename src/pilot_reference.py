@@ -69,8 +69,11 @@ class PilotReferenceGenerator:
         
         # Forward pass for jerk
         for i in range(1, n - 1):
-            v_avg = (smoothed_v[i] + smoothed_v[i+1]) / 2.0
-            dt = ds / v_avg if v_avg > 1e-3 else ds / 1.0  # fallback for near zero speed
+            # Use the accel array's own in-progress values, not the raw smoothed_v,
+            # to compute the time-step -- otherwise dt is inconsistent with the
+            # velocity profile being built.
+            v_here = abs(smoothed_v[i]) if abs(smoothed_v[i]) > 1e-3 else 1.0
+            dt = ds / v_here
                 
             max_da_up = max_jerk_accel * dt
             max_da_down = max_jerk_brake * dt
@@ -96,9 +99,14 @@ class PilotReferenceGenerator:
         # Backward Pass (Ensures we can brake in time for corners and stops)
         # max_brake is negative (e.g. -2.0 m/s²); use abs for clarity.
         a_brake_abs = abs(self.config.max_brake)
+        stops_set = set(stops.tolist())
         for i in range(n-2, -1, -1):
-            if i in stops:
+            if i in stops_set:
+                # The stop node itself is pinned to v=0; no clamp needed here.
                 continue
+            # Clamp v[i] so that we can brake to v[i+1] within one segment.
+            # This must run even when i+1 is a stop (v[i+1]=0), so the
+            # approach speed is correctly limited.
             v_prev_sq = final_v[i+1]**2 + 2 * a_brake_abs * ds
             final_v[i] = min(final_v[i], np.sqrt(max(0, v_prev_sq)))
             
@@ -158,19 +166,27 @@ class PilotReferenceGenerator:
             db = self.config.force_deadband_N + 1e-3
             
             # Map required force to control inputs (-1.0 to 1.0)
+            # Normalise by the motor's actual force limit at this speed so
+            # ctrl=1.0 means "100% of available motor torque" and ctrl=-1.0
+            # means "maximum mechanical braking".  Using mass*max_accel_pilot
+            # as the denominator was wrong: it mixed resistance forces in and
+            # produced clips > 1 at low speed/uphill even at moderate demand.
+            f_motor_max = self.vehicle.motor_limited_force(max(v_eval, 0.5))
+            f_brake_max = self.vehicle.max_braking_force(max(v_eval, 0.5), grade_eval)
+
             if f_trac > db:
                 # Needs positive traction (Throttle)
-                ctrl = min(f_trac / (self.vehicle.config.mass * self.config.max_accel), 1.0)
+                ctrl = min(f_trac / f_motor_max, 1.0)
                 if a > self.config.hold_accel_threshold:
                     zone = "ACCELERATE"
                 else:
                     zone = "HOLD"
             elif f_trac < -db:
                 # Needs negative traction (Mechanical Brakes)
-                ctrl = -min(abs(f_trac) / (self.vehicle.config.mass * abs(self.config.max_brake)), 1.0)
+                ctrl = -min(abs(f_trac) / f_brake_max, 1.0)
                 zone = "BRAKE"
             else:
-                # Within deadband margin of 0 traction, meaning we are just coasting
+                # Within deadband margin of 0 traction: coasting
                 ctrl = 0.0
                 zone = "COAST"
                     
