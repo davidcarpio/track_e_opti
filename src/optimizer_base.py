@@ -212,21 +212,66 @@ class BaseOptimizer(ABC):
     # ── velocity envelope ───────────────────────────────────────────
 
     def _compute_velocity_limits(self):
-        """Compute maximum velocity at each point from cornering limits."""
+        """Compute maximum velocity at each point from cornering and motor-power limits.
+
+        Three limits are applied at every node:
+        1. Lateral grip (cornering): v²/R ≤ μ·N/m
+        2. Rollover (narrow vehicles): v²/R ≤ g·(t/2)/h_cg
+        3. Motor power (hills/straights): the highest steady-state speed the
+           motor can maintain against total resistance at the local grade.
+           This is the key factor producing hill-based velocity variation.
+        """
         self.v_max = np.zeros(len(self.distances))
 
         for i, (r, g) in enumerate(zip(self.radii, self.grades)):
             v_corner = self.vehicle.max_cornering_velocity(r, g)
             # v_max ∝ √(μ·g·R), so a force-level FoS on μ translates to
             # √FoS on velocity.  E.g. FoS=0.9 → v_limit = 0.949·v_corner.
+            v_motor = self._motor_power_limited_speed(g)
             self.v_max[i] = min(
                 v_corner * np.sqrt(self.config.traction_fos),
+                v_motor,
                 self.config.max_velocity,
             )
 
         self.stop_indices: List[int] = []
         for stop_dist in self.config.stop_distances:
             self._apply_stop_constraint(stop_dist)
+
+    def _motor_power_limited_speed(self, grade: float) -> float:
+        """
+        Find the highest steady-state speed the motor can sustain at a given grade.
+
+        At steady state: P_motor * η_drivetrain = F_resistance(v, grade) * v
+        This is a monotone equation in v, solved with bisection.
+
+        On uphills the motor must overcome gravity, so the equilibrium speed
+        drops.  On downhills the motor is not needed and gravity assists, so
+        the car can reach v_max (capped by regulation).
+
+        Returns
+        -------
+        float
+            Motor-power-limited max speed in m/s.
+        """
+        c = self.vehicle.config
+        P_available = c.max_motor_power * c.drivetrain_efficiency
+
+        # At v_max, can the motor overcome resistance?
+        f_resist_at_vmax = self.vehicle.total_resistance_force(c.max_velocity, grade)
+        if f_resist_at_vmax * c.max_velocity <= P_available:
+            # Motor is not the limiting factor at this grade
+            return c.max_velocity
+
+        # Bisect: find v where F_resist(v) * v == P_available
+        lo, hi = 0.1, c.max_velocity
+        for _ in range(40):
+            mid = (lo + hi) / 2.0
+            if self.vehicle.total_resistance_force(mid, grade) * mid < P_available:
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2.0
 
     def _apply_stop_constraint(self, stop_distance: float):
         """Apply v = 0 envelope around *stop_distance*."""
