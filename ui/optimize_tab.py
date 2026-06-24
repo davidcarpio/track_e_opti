@@ -82,12 +82,12 @@ class OptimizeTab(QWidget):
         # Laps and Time
         self.spin_laps = QSpinBox()
         self.spin_laps.setRange(1, 100)
-        self.spin_laps.setValue(7)  # 7 laps for Urban Concept (SEM EU 2025)
+        self.spin_laps.setValue(4)  # default: 4 laps
         form.addRow("Number of Laps:", self.spin_laps)
 
         self.spin_race_time = QDoubleSpinBox()
         self.spin_race_time.setRange(1.0, 1000.0)
-        self.spin_race_time.setValue(20.0)  # 20 mins (SEM Urban Concept)
+        self.spin_race_time.setValue(35.0)  # default: 35 mins
         self.spin_race_time.setSuffix(" mins")
         self.spin_race_time.setSingleStep(1.0)
         form.addRow("Total Race Time:", self.spin_race_time)
@@ -498,12 +498,6 @@ class OptimizeTab(QWidget):
         ax.plot(r.distances, r.velocities * 3.6, color=ACCENT, linewidth=1.5, zorder=3,
                 label="Velocity")
 
-        # Coasting segments — where electrical power <= 0 (motor off)
-        coasting = r.power_electrical <= 0.01
-        coast_v = np.where(coasting, r.velocities * 3.6, np.nan)
-        ax.plot(r.distances, coast_v, color="#e0af68", linewidth=3, alpha=0.6,
-                zorder=4, label="Coasting (motor off)")
-
         for s in stops:
             ax.axvline(s, color="#f7768e", ls=":", alpha=0.5, zorder=2)
 
@@ -516,7 +510,6 @@ class OptimizeTab(QWidget):
         ax.grid(True, alpha=0.3)
 
         self.pw_vel.draw()
-
 
         # forces (longitudinal + lateral)
         ax = self.ax_force; ax.clear()

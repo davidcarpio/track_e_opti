@@ -30,7 +30,7 @@ class OptimizationConfig:
     # Constraints
     max_velocity: float = 40.0 / 3.6          # m/s (SEM rule)
     min_velocity: float = 0.0                  # m/s (true zero)
-    max_lap_time: float = 20.0 * 60.0 / 7.0   # ~171.4 s per lap (SEM Urban Concept: 7 laps / 20 min)
+    max_lap_time: float = 35.0 * 60.0 / 4.0   # ~525 s per lap (default: 4 laps / 35 min)
 
     # Stop parameters
     stop_distances: List[float] = field(default_factory=list)
