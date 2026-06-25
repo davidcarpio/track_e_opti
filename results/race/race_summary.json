@@ -1,35 +1,34 @@
 {
   "laps": 7,
   "total_time_budget_s": 1320.0,
-  "track": "data/tracks/sem_2025_eu.csv",
   "track_length_m": 1319.627,
   "vehicle_mass_kg": 74.5,
-  "linking_velocity_ms": 6.800031317095545,
-  "linking_velocity_kmh": 24.480112741543962,
+  "linking_velocity_ms": 6.858598057811943,
+  "linking_velocity_kmh": 24.690953008122996,
   "lap_1": {
-    "time_s": 188.10904876168635,
-    "energy_Wh": 3.5149169490601153,
-    "avg_speed_kmh": 25.25480422804415,
-    "peak_power_W": 596.2949439802838
+    "time_s": 188.55054002674314,
+    "energy_Wh": 2.443467206103205,
+    "avg_speed_kmh": 25.195670080426122,
+    "peak_power_W": 114.79565569858435
   },
   "middle_lap": {
     "count": 5,
-    "time_s": 188.35019771557077,
-    "energy_Wh": 2.7449012836945976,
-    "avg_speed_kmh": 25.2224699396069,
-    "peak_power_W": 170.9585907183844
+    "time_s": 188.58559374947603,
+    "energy_Wh": 1.9269069764775966,
+    "avg_speed_kmh": 25.190986785082565,
+    "peak_power_W": 74.75974157039307
   },
   "last_lap": {
-    "time_s": 189.1384953668303,
-    "energy_Wh": 2.6559248204421904,
-    "avg_speed_kmh": 25.117346898558093,
-    "peak_power_W": 253.94432829886188
+    "time_s": 188.55139943652176,
+    "energy_Wh": 1.6513821413863858,
+    "avg_speed_kmh": 25.1955552395641,
+    "peak_power_W": 84.88006933265045
   },
   "race_total": {
-    "time_s": 1318.9985327063705,
-    "time_min": 21.98330887843951,
-    "energy_Wh": 19.89534818797529,
-    "avg_speed_kmh": 25.212007121620495,
-    "peak_power_W": 596.2949439802838
+    "time_s": 1320.029908210645,
+    "time_min": 22.00049847017742,
+    "energy_Wh": 13.729384229877574,
+    "avg_speed_kmh": 25.192308290255315,
+    "peak_power_W": 114.79565569858435
   }
 }

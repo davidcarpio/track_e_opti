@@ -128,6 +128,13 @@ class VehicleConfig:
             weight_dist_front=0.614,      # XG=536.4mm → f=(1389-536.4)/1389
             max_motor_power=1000.0,
             max_velocity=35.0 / 3.6,
+            # Power unit curve exactly as Carto pricess III.xlsx
+            motor_eff_xp=[0.0, 0.0262, 0.0733, 0.1257, 0.1885, 0.2356, 0.3142, 0.3665, 0.4189, 0.75, 1.0, 100.0],
+            motor_eff_yp=[0.85, 0.9775, 0.9648, 0.9543, 0.9452, 0.9370, 0.9294, 0.9223, 0.9156, 0.85, 0.80, 0.80],
+            nlp_eta_peak=0.96,
+            nlp_k=0.005,
+            nlp_drop_mag=0.0,
+            nlp_eta_min=0.85,
         )
 
 

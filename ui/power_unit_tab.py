@@ -44,7 +44,7 @@ class PowerUnitTab(QWidget):
         self.state = app_state
         self._spinboxes: dict[str, QDoubleSpinBox] = {}
         self._build_ui()
-        self._load_defaults()
+        self.refresh_from_state()
 
     def _build_ui(self):
         root = QHBoxLayout(self)
@@ -147,6 +147,23 @@ class PowerUnitTab(QWidget):
         for _, fields in _CATEGORIES:
             yield from fields
 
+    def refresh_from_state(self):
+        c = self.state.vehicle.config
+        for attr, *_ in self._all_fields():
+            self._spinboxes[attr].blockSignals(True)
+            self._spinboxes[attr].setValue(getattr(c, attr))
+            self._spinboxes[attr].blockSignals(False)
+
+        self.edit_xp.blockSignals(True)
+        self.edit_xp.setText(", ".join(map(str, c.motor_eff_xp)))
+        self.edit_xp.blockSignals(False)
+
+        self.edit_yp.blockSignals(True)
+        self.edit_yp.setText(", ".join(map(str, c.motor_eff_yp)))
+        self.edit_yp.blockSignals(False)
+
+        self._update_plot()
+
     def _load_defaults(self):
         defaults = VehicleConfig()
         for attr, *_ in self._all_fields():
@@ -237,7 +254,7 @@ class PowerUnitTab(QWidget):
         eta_rise = eta_min + (eta_peak - eta_min) * x_vals / (x_vals + k)
         excess = np.maximum(x_vals - 1.0, 0.0)
         eta_decay = 1.0 - drop_mag * excess * excess / (1.0 + excess * excess)
-        y_vals = np.maximum(eta_rise * eta_decay, eta_min)
+        y_vals = np.maximum(eta_rise * eta_decay, 0.10)
 
         self.ax.plot(x_vals, y_vals, '--', color="#7aa2f7", label="CasADi NLP (Smooth)", linewidth=2.5)
 
