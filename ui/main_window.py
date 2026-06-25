@@ -20,7 +20,7 @@ class AppState:
     """Shared state passed to every tab."""
     track: Optional[Track] = None
     vehicle: VehicleDynamics = field(
-        default_factory=lambda: VehicleDynamics(VehicleConfig())
+        default_factory=lambda: VehicleDynamics(VehicleConfig.phoenix_p3())
     )
     stop_distances: list = field(default_factory=lambda: [0.0])
     last_result: Optional[OptimizationResult] = None

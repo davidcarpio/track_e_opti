@@ -335,7 +335,7 @@ class VehicleTab(QWidget):
                 self.status_label.setText(f"Error loading: {str(e)}")
 
     def _load_defaults(self):
-        defaults = VehicleConfig()
+        defaults = VehicleConfig.phoenix_p3()
         # Reset dropdowns
         self.combo_category.blockSignals(True)
         self.combo_category.setCurrentIndex(
