@@ -1,4 +1,4 @@
-"""
+pyth"""
 NLP Optimizer — CasADi / IPOPT direct-collocation solver.
 
 Replaces the old ``_optimize_direct`` (L-BFGS-B on a non-differentiable
