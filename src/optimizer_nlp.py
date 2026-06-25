@@ -1,4 +1,4 @@
-pyth"""
+"""
 NLP Optimizer — CasADi / IPOPT direct-collocation solver.
 
 Replaces the old ``_optimize_direct`` (L-BFGS-B on a non-differentiable
@@ -64,7 +64,7 @@ def _smooth_motor_efficiency(
     excess = _smooth_max(x - 1.0, 0.0)
     eta_decay = 1.0 - drop_mag * excess * excess / (1.0 + excess * excess)
 
-    return _smooth_max(eta_rise * eta_decay, eta_min)
+    return _smooth_max(eta_rise * eta_decay, 0.10)
 
 
 def _smooth_max(a, b, eps: float = 1e-4):
@@ -98,7 +98,7 @@ class NLPOptimizer(BaseOptimizer):
             )
         super().__init__(track, vehicle, config)
 
-    # ── CasADi vehicle model (symbolic) ─────────────────────────────
+    #   CasADi vehicle model (symbolic)
 
     def _sym_resistance_force(self, v: "ca.SX", grade: float) -> "ca.SX":
         """Total resistance force as CasADi expression."""
@@ -178,7 +178,7 @@ class NLPOptimizer(BaseOptimizer):
         else:
             return p_elec
 
-    # ── NLP construction & solve ────────────────────────────────────
+    #  NLP construction & solve
 
     def _solve(self, **kwargs) -> np.ndarray:
         """Build and solve the NLP with CasADi + IPOPT."""
@@ -186,10 +186,10 @@ class NLPOptimizer(BaseOptimizer):
         ds = self.ds
         c = self.vehicle.config
 
-        # ── decision variables: velocity at each node ───────────────
+        #  decision variables: velocity at each node
         v = ca.SX.sym("v", n)
 
-        # ── objective: total electrical energy ──────────────────────
+        #  objective: total electrical energy
         total_energy = 0.0
         total_time_expr = 0.0
         v_floor = 0.05
@@ -207,7 +207,7 @@ class NLPOptimizer(BaseOptimizer):
             total_energy += p_elec * dt_i
             total_time_expr += dt_i
             
-        # ── regularization ──────────────────────────────────────────
+        #  regularization
         # Add a tiny jerk penalty to resolve flat regions in the objective
         # (e.g. when braking costs 0 energy) and prevent oscillations.
         jerk_penalty = 0.0
@@ -215,18 +215,32 @@ class NLPOptimizer(BaseOptimizer):
             da = accels[i+1] - accels[i]
             jerk_penalty += da * da
 
-        # ── bounds on v ─────────────────────────────────────────────
+        #   bounds on v
         lbv = np.zeros(n)
         ubv = self.v_max.copy()
+
+        # Pin non-zero boundary velocities (both lb and ub)
+        if self.v_start_pinned is not None and self.v_start_pinned > 0:
+            lbv[0] = self.v_start_pinned
+            ubv[0] = self.v_start_pinned
+        if self.v_end_pinned is not None and self.v_end_pinned > 0:
+            lbv[-1] = self.v_end_pinned
+            ubv[-1] = self.v_end_pinned
 
         # Stop nodes: fix to 0
         for idx in self.stop_indices:
             ubv[idx] = 0.0
 
-        # ── constraints ─────────────────────────────────────────────
+        #   constraints
         g = []
         lbg = []
         ubg = []
+
+        # 0) Periodic boundary: v[0] == v[-1]  (for middle laps)
+        if self.periodic_lap:
+            g.append(v[0] - v[n - 1])
+            lbg.append(0.0)
+            ubg.append(0.0)
 
         # 1) Lap-time constraint: total_time ≤ max_lap_time
         g.append(total_time_expr / 100.0)
@@ -277,8 +291,17 @@ class NLPOptimizer(BaseOptimizer):
 
         g_vec = ca.vertcat(*g)
 
-        # ── initial guess ───────────────────────────────────────────
+        #   initial guess
         strategy = self.config.nlp_initial_guess
+
+        # DP doesn't support periodic or non-zero boundary pins — fall back
+        if strategy == "dp" and (
+            self.periodic_lap
+            or (self.v_start_pinned is not None and self.v_start_pinned > 0)
+            or (self.v_end_pinned is not None and self.v_end_pinned > 0)
+        ):
+            strategy = "heuristic"
+
         print(f"  [NLP] Initial guess strategy: {strategy}")
 
         if strategy == "dp":
@@ -317,7 +340,13 @@ class NLPOptimizer(BaseOptimizer):
                 "Choose 'dp', 'heuristic', or 'constant'."
             )
 
-        # ── create NLP and solve ────────────────────────────────────
+        # For periodic laps, enforce v0[0] == v0[-1] in initial guess
+        if self.periodic_lap:
+            v_avg_boundary = (v0[0] + v0[-1]) / 2.0
+            v0[0] = v_avg_boundary
+            v0[-1] = v_avg_boundary
+
+        #   create NLP and solve
         nlp_obj = (total_energy + self.config.jerk_penalty_weight * jerk_penalty) / 1000.0
         nlp = {"x": v, "f": nlp_obj, "g": g_vec}
         opts = {
