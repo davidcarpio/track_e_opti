@@ -135,8 +135,8 @@ class TestPowertrainAndDynamics:
         # Peak load (e.g. 750W -> load 0.75) -> 0.87 + 0.25 * (0.03)/0.5 = 0.885
         assert default_vehicle.motor_efficiency_at_power(750.0) == pytest.approx(0.885, abs=1e-3)
 
-        # Overload (e.g. 1200W -> load 1.2) -> 0.90 - 0.2 * 0.25 = 0.85
-        assert default_vehicle.motor_efficiency_at_power(1200.0) == pytest.approx(0.85, abs=1e-3)
+        # Overload (e.g. 1200W -> load 1.2) -> 0.90 + (1.2 - 1.0)/(1.5 - 1.0) * (0.80 - 0.90) = 0.90 - 0.04 = 0.86
+        assert default_vehicle.motor_efficiency_at_power(1200.0) == pytest.approx(0.86, abs=1e-3)
 
         # Extreme overload capped at 0.65 (load = 3.0 -> 0.9 - 2.0*0.25 = 0.4 < 0.65)
         assert default_vehicle.motor_efficiency_at_power(3000.0) == pytest.approx(0.65)
@@ -180,9 +180,9 @@ class TestPowertrainAndDynamics:
         # At 10 m/s with 0 accel -> mech power = 352.5 W
         # In custom_vehicle, max_power=1000, drivetrain_efficiency=1.0.
         # Mech power = 352.5 -> load = 0.3525
-        eta_motor = custom_vehicle.motor_efficiency_at_power(352.5)
+        eta_motor = custom_vehicle.smooth_motor_efficiency(352.5)
         expected_elec = 352.5 / (eta_motor * 1.0)
-
+    
         assert custom_vehicle.electrical_power(10.0, 0.0, grade=0.0) == pytest.approx(expected_elec)
 
         # Braking with NO regeneration
@@ -192,8 +192,9 @@ class TestPowertrainAndDynamics:
         # Braking WITH regeneration (e.g. 50%)
         custom_vehicle.config.regen_efficiency = 0.5
         p_mech = custom_vehicle.power_required(10.0, -2.0, grade=0.0)  # -1647.5
-        eta_motor_regen = custom_vehicle.motor_efficiency_at_power(abs(p_mech))
-        expected_regen_power = p_mech * eta_motor_regen * 1.0 * 0.5
+        p_regen_mech = max(p_mech, -custom_vehicle.config.max_motor_power)
+        eta_motor_regen = custom_vehicle.smooth_motor_efficiency(abs(p_regen_mech))
+        expected_regen_power = p_regen_mech * eta_motor_regen * 1.0 * 0.5
         assert custom_vehicle.electrical_power(10.0, -2.0, grade=0.0) == pytest.approx(expected_regen_power)
 
     def test_max_braking_decel(self, default_vehicle):
@@ -220,7 +221,11 @@ class TestPowertrainAndDynamics:
         p_elec = custom_vehicle.electrical_power(10.0, 0.0)
         assert custom_vehicle.energy_for_segment(10.0, 10.0, 100.0) == pytest.approx(p_elec * 10.0)
 
-        # Accelerating: v1=0 (though v_avg will be used), let's use v1=5, v2=15 -> v_avg = 10. distance=100
+        # Accelerating: v1=5, v2=15 -> v_avg = 10. distance=100
         # dt = 10s. a = (225 - 25) / 200 = 1 m/s^2
-        p_elec_accel = custom_vehicle.electrical_power(10.0, 1.0)
-        assert custom_vehicle.energy_for_segment(5.0, 15.0, 100.0) == pytest.approx(p_elec_accel * 10.0)
+        # Use Simpson's rule as the method does internally
+        p1 = custom_vehicle.electrical_power(5.0, 1.0)
+        p2 = custom_vehicle.electrical_power(15.0, 1.0)
+        p_mid = custom_vehicle.electrical_power(10.0, 1.0)
+        expected_energy = (p1 + 4*p_mid + p2) / 6.0 * 10.0
+        assert custom_vehicle.energy_for_segment(5.0, 15.0, 100.0) == pytest.approx(expected_energy)
