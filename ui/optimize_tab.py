@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QLineEdit, QPushButton, QGroupBox, QFormLayout,
     QSplitter, QTabWidget, QGridLayout, QFileDialog, QMessageBox,
-    QTextEdit,
+    QTextEdit, QRadioButton, QButtonGroup
 )
 from PyQt6.QtCore import Qt
 
@@ -19,7 +19,7 @@ import numpy as np
 from src.trajectory_optimizer import OptimizationConfig, OptimizationResult
 from src.track_analysis import Track
 from ui.theme import ACCENT, TEXT_DIM, SUCCESS, WARNING, ERROR, apply_mpl_theme
-from ui.workers import OptimizationWorker
+from ui.workers import OptimizationWorker, RaceWorker
 from ui.plot_widget import PlotWidget
 from matplotlib.patches import Patch
 
@@ -32,6 +32,10 @@ class OptimizeTab(QWidget):
         self.state = app_state
         self._worker: OptimizationWorker | None = None
         self._result: OptimizationResult | None = None
+        self._race_summary: dict | None = None
+        self._r_first: OptimizationResult | None = None
+        self._r_mid: OptimizationResult | None = None
+        self._r_last: OptimizationResult | None = None
         self._track_for_result: Track | None = None
         self._last_run_stops: list[float] | None = None
         apply_mpl_theme()
@@ -203,6 +207,37 @@ class OptimizeTab(QWidget):
         splitter.addWidget(left)
 
         #    RIGHT: plots     
+        right = QWidget()
+        right_lay = QVBoxLayout(right)
+        right_lay.setContentsMargins(0, 0, 0, 0)
+
+        # Plot Selector (hidden by default, shown for multi-lap races)
+        self.selector_widget = QWidget()
+        selector_lay = QHBoxLayout(self.selector_widget)
+        selector_lay.setContentsMargins(0, 0, 0, 0)
+        selector_lay.addWidget(QLabel("<b>View Lap:</b>"))
+        
+        self.btn_group = QButtonGroup(self)
+        
+        self.rb_lap1 = QRadioButton("Lap 1 (Start)")
+        self.rb_mid = QRadioButton("Middle Laps (Periodic)")
+        self.rb_lap7 = QRadioButton("Last Lap (Finish)")
+        
+        self.rb_mid.setChecked(True)
+        
+        self.btn_group.addButton(self.rb_lap1, 1)
+        self.btn_group.addButton(self.rb_mid, 2)
+        self.btn_group.addButton(self.rb_lap7, 3)
+        self.btn_group.buttonClicked.connect(self._on_plot_selected)
+        
+        selector_lay.addWidget(self.rb_lap1)
+        selector_lay.addWidget(self.rb_mid)
+        selector_lay.addWidget(self.rb_lap7)
+        selector_lay.addStretch()
+        
+        self.selector_widget.setVisible(False)
+        right_lay.addWidget(self.selector_widget)
+
         self.plot_tabs = QTabWidget()
 
         self.pw_vel   = PlotWidget(figsize=(7, 3)); self.ax_vel   = self.pw_vel.add_subplot(111)
@@ -257,7 +292,9 @@ class OptimizeTab(QWidget):
         self.plot_tabs.addTab(self.pw_accel, "Acceleration")
         self.plot_tabs.addTab(self.pw_map,   "Racetrack")
 
-        splitter.addWidget(self.plot_tabs)
+        right_lay.addWidget(self.plot_tabs)
+
+        splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 7)
         root.addWidget(splitter)
@@ -401,36 +438,50 @@ class OptimizeTab(QWidget):
             
         time_s = self.spin_race_time.value() * 60.0
         laps = self.spin_laps.value()
-        max_lap_time = time_s / laps if laps > 0 else 0
-
-        config = OptimizationConfig(
-            num_nodes=self.spin_nodes.value(),
-            stop_distances=stop_distances,
-            max_lap_time=max_lap_time,
-            max_iterations=self.spin_iters.value(),
-            tol=tol,
-            acceptable_tol=acc_tol,
-            acceptable_obj_change_tol=acc_obj,
-            acceptable_iter=self.spin_acc_iter.value(),
-            jerk_penalty_weight=jerk_wt,
-            traction_fos=self.spin_fos.value() / 100.0,
-            nlp_initial_guess=self.combo_guess.currentData(),
-        )
         method = self.combo_method.currentData()
-
-        self._last_run_stops = stop_distances
-
+        
         self.btn_run.setEnabled(False)
         self.lbl_status.setText("Optimising…")
         self.lbl_status.setStyleSheet(f"color: {ACCENT};")
         self.state.set_status("Optimising…")
 
-        self._worker = OptimizationWorker(
-            self.state.track, self.state.vehicle, config, method
-        )
-        self._worker.finished.connect(self._on_finished)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        if stops_text.lower() == "none" and laps > 1:
+            self._worker = RaceWorker(
+                track=self.state.track,
+                vehicle=self.state.vehicle,
+                laps=laps,
+                total_time_s=time_s,
+                num_nodes=self.spin_nodes.value(),
+                method=method,
+            )
+            self._worker.finished.connect(self._on_race_finished)
+            self._worker.error.connect(self._on_error)
+            self._worker.start()
+        else:
+            max_lap_time = time_s / laps if laps > 0 else 0
+
+            config = OptimizationConfig(
+                num_nodes=self.spin_nodes.value(),
+                stop_distances=stop_distances,
+                max_lap_time=max_lap_time,
+                max_iterations=self.spin_iters.value(),
+                tol=tol,
+                acceptable_tol=acc_tol,
+                acceptable_obj_change_tol=acc_obj,
+                acceptable_iter=self.spin_acc_iter.value(),
+                jerk_penalty_weight=jerk_wt,
+                traction_fos=self.spin_fos.value() / 100.0,
+                nlp_initial_guess=self.combo_guess.currentData(),
+            )
+
+            self._last_run_stops = stop_distances
+
+            self._worker = OptimizationWorker(
+                self.state.track, self.state.vehicle, config, method
+            )
+            self._worker.finished.connect(self._on_finished)
+            self._worker.error.connect(self._on_error)
+            self._worker.start()
 
     def _on_finished(self, track: Track, result: OptimizationResult):
         try:
@@ -440,12 +491,14 @@ class OptimizeTab(QWidget):
             return
 
         self._result = result
+        self._race_summary = None
         self._track_for_result = track
         self.state.last_result = result
         
         self.btn_run.setEnabled(True)
         self.btn_export.setEnabled(True)
         self.btn_save_default.setEnabled(True)
+        self.selector_widget.setVisible(False)
 
         # km/kWh
         track_km = track.total_distance / 1000
@@ -468,6 +521,64 @@ class OptimizeTab(QWidget):
         self._summary["Efficiency"].setText(f"{km_kwh:.0f}")
 
         self._draw_plots(track, result)
+
+    def _on_race_finished(self, summary, r_first, r_mid, r_last):
+        try:
+            self._summary["Energy"].text()
+        except RuntimeError:
+            return
+
+        self._race_summary = summary
+        self._r_first = r_first
+        self._r_mid = r_mid
+        self._r_last = r_last
+        self._track_for_result = self.state.track
+        # By default, multi-lap race doesn't set a single result state
+        self._result = r_mid 
+        self.state.last_result = r_mid
+        
+        self.btn_run.setEnabled(True)
+        self.btn_export.setEnabled(False) # Export is more complex for multi-lap, we can disable it for now or implement it later
+        self.btn_save_default.setEnabled(False)
+        self.selector_widget.setVisible(True)
+
+        t_total = summary["race_total"]["time_s"]
+        e_wh = summary["race_total"]["energy_Wh"]
+        margin = summary["total_time_budget_s"] - t_total
+        
+        msg = f"✓ Race Complete: {e_wh:.2f} Wh, Margin: {margin:.1f} s"
+        self.lbl_status.setText(msg)
+        self.lbl_status.setStyleSheet(f"color: {SUCCESS};")
+        self.state.set_status(msg)
+
+        # km/kWh for the entire race
+        track_km = (self.state.track.total_distance * summary["laps"]) / 1000
+        e_kwh = e_wh / 1000
+        km_kwh = track_km / e_kwh if e_kwh > 0 else 0
+
+        # summary cards (TOTAL RACE values)
+        self._summary["Energy"].setText(f"{e_wh:.3f}")
+        self._summary["Lap Time"].setText(f"{t_total:.1f}")
+        self._summary["Peak Power"].setText(f"{summary['race_total']['peak_power_W']:.0f}")
+        self._summary["Peak Force"].setText(f"—") # Not aggregated in summary
+        self._summary["Avg Speed"].setText(f"{summary['race_total']['avg_speed_kmh']:.1f}")
+        self._summary["Efficiency"].setText(f"{km_kwh:.0f}")
+
+        self._on_plot_selected()
+
+    def _on_plot_selected(self, _btn=None):
+        if not self._race_summary:
+            return
+            
+        lap_id = self.btn_group.checkedId()
+        if lap_id == 1:
+            r = self._r_first
+        elif lap_id == 2:
+            r = self._r_mid
+        else:
+            r = self._r_last
+
+        self._draw_plots(self._track_for_result, r)
 
     def _on_error(self, msg: str):
         self.btn_run.setEnabled(True)
