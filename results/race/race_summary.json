@@ -1,0 +1,35 @@
+{
+  "laps": 7,
+  "total_time_budget_s": 1320.0,
+  "track": "data/tracks/sem_2025_eu.csv",
+  "track_length_m": 1319.627,
+  "vehicle_mass_kg": 74.5,
+  "linking_velocity_ms": 6.800031317095545,
+  "linking_velocity_kmh": 24.480112741543962,
+  "lap_1": {
+    "time_s": 188.10904876168635,
+    "energy_Wh": 3.5149169490601153,
+    "avg_speed_kmh": 25.25480422804415,
+    "peak_power_W": 596.2949439802838
+  },
+  "middle_lap": {
+    "count": 5,
+    "time_s": 188.35019771557077,
+    "energy_Wh": 2.7449012836945976,
+    "avg_speed_kmh": 25.2224699396069,
+    "peak_power_W": 170.9585907183844
+  },
+  "last_lap": {
+    "time_s": 189.1384953668303,
+    "energy_Wh": 2.6559248204421904,
+    "avg_speed_kmh": 25.117346898558093,
+    "peak_power_W": 253.94432829886188
+  },
+  "race_total": {
+    "time_s": 1318.9985327063705,
+    "time_min": 21.98330887843951,
+    "energy_Wh": 19.89534818797529,
+    "avg_speed_kmh": 25.212007121620495,
+    "peak_power_W": 596.2949439802838
+  }
+}
