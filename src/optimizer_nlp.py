@@ -36,7 +36,7 @@ from typing import Optional
 # ═══════════════════════════════════════════════════════════════════════
 
 def _smooth_motor_efficiency(
-    p_mech: "ca.SX", p_rated: float, eta_peak: float = 0.92, k: float = 0.08, drop_mag: float = 0.30, eta_min: float = 0.50
+    p_mech: "ca.SX", p_rated: float, eta_peak: float = 0.92, k: float = 0.08, drop_mag: float = 0.30, eta_min: float = 0.50, load_offset: float = 0.0
 ) -> "ca.SX":
     """
     Smooth approximation of motor efficiency as function of mechanical
@@ -55,7 +55,8 @@ def _smooth_motor_efficiency(
     is smooth everywhere (no kinks for IPOPT).
     """
 
-    x = _smooth_abs(p_mech) / p_rated
+    x = _smooth_abs(p_mech) / p_rated + load_offset
+    x = _smooth_max(x, 0.0)
 
     # Rising part: eta_min → eta_peak as load increases
     eta_rise = eta_min + (eta_peak - eta_min) * x / (x + k)
@@ -159,7 +160,7 @@ class NLPOptimizer(BaseOptimizer):
         p_driving = ca.fmax(p_mech, 0.0)
         eta = _smooth_motor_efficiency(
             p_driving, c.max_motor_power,
-            eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min
+            eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min, load_offset=c.nlp_load_offset
         )
         p_elec = p_driving / (eta * c.drivetrain_efficiency)
 
@@ -168,7 +169,7 @@ class NLPOptimizer(BaseOptimizer):
             p_regen_mech = ca.fmax(p_mech, -c.max_motor_power)
             eta_regen = _smooth_motor_efficiency(
                 _smooth_abs(p_regen_mech), c.max_motor_power,
-                eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min
+                eta_peak=c.nlp_eta_peak, k=c.nlp_k, drop_mag=c.nlp_drop_mag, eta_min=c.nlp_eta_min, load_offset=c.nlp_load_offset
             )
             p_regen = p_regen_mech * eta_regen * c.drivetrain_efficiency * c.regen_efficiency
             # Use p_elec when p_mech > 0, p_regen when p_mech < 0

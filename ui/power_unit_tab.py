@@ -32,6 +32,7 @@ _CATEGORIES: list[tuple[str, list]] = [
         ("nlp_k", "NLP 'k' Param", "", 0.01, 1.0, 0.01, 3, "Curvature"),
         ("nlp_drop_mag", "NLP Drop Mag", "", 0.0, 1.0, 0.01, 2, "Overload penalty"),
         ("nlp_eta_min", "NLP Min Eff.", "", 0.1, 1.0, 0.01, 2, "Floor efficiency limit"),
+        ("nlp_load_offset", "NLP Load Offset", "", -1.0, 1.0, 0.01, 2, "Left-right shift"),
     ])
 ]
 
@@ -250,9 +251,11 @@ class PowerUnitTab(QWidget):
         k = c.nlp_k
         drop_mag = c.nlp_drop_mag
         eta_min = c.nlp_eta_min
+        load_offset = c.nlp_load_offset
 
-        eta_rise = eta_min + (eta_peak - eta_min) * x_vals / (x_vals + k)
-        excess = np.maximum(x_vals - 1.0, 0.0)
+        x_eff = np.maximum(x_vals + load_offset, 0.0)
+        eta_rise = eta_min + (eta_peak - eta_min) * x_eff / (x_eff + k)
+        excess = np.maximum(x_eff - 1.0, 0.0)
         eta_decay = 1.0 - drop_mag * excess * excess / (1.0 + excess * excess)
         y_vals = np.maximum(eta_rise * eta_decay, 0.10)
 

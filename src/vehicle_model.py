@@ -80,6 +80,7 @@ class VehicleConfig:
     nlp_k: float = 0.08
     nlp_drop_mag: float = 0.30
     nlp_eta_min: float = 0.50
+    nlp_load_offset: float = 0.0
 
     # Limits
     max_velocity: float = 40.0 / 3.6  # 40 km/h in m/s
@@ -135,6 +136,7 @@ class VehicleConfig:
             nlp_k=0.005,
             nlp_drop_mag=0.0,
             nlp_eta_min=0.85,
+            nlp_load_offset=0.0,
         )
 
 
@@ -433,7 +435,11 @@ class VehicleDynamics:
         """
         c = self.config
         P = np.abs(power_mech)
-        x = P / c.max_motor_power
+        x_base = P / c.max_motor_power + c.nlp_load_offset
+        if isinstance(x_base, np.ndarray):
+            x = np.maximum(x_base, 0.0)
+        else:
+            x = max(x_base, 0.0)
 
         eta_rise = c.nlp_eta_min + (c.nlp_eta_peak - c.nlp_eta_min) * x / (x + c.nlp_k)
 
