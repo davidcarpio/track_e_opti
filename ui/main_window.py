@@ -47,7 +47,8 @@ class MainWindow(QMainWindow):
         from ui.vehicle_tab import VehicleTab
         from ui.power_unit_tab import PowerUnitTab
         from ui.optimize_tab import OptimizeTab
-        from ui.race_tab import RaceTab
+        from ui.endurance_tab import EnduranceTab
+        from ui.pilot_tab import PilotTab
         from ui.convergence_tab import ConvergenceTab
 
         self.tabs = QTabWidget()
@@ -55,7 +56,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(VehicleTab(self.state),      "Vehicle")
         self.tabs.addTab(PowerUnitTab(self.state),    "Power Unit")
         self.tabs.addTab(OptimizeTab(self.state),     "Simulation")
-        self.tabs.addTab(RaceTab(self.state),         "Race")
+        self.tabs.addTab(EnduranceTab(self.state),    "Endurance")
+        self.tabs.addTab(PilotTab(self.state),        "Pilot")
         self.tabs.addTab(ConvergenceTab(self.state),  "Convergence")
         self.setCentralWidget(self.tabs)
 
@@ -66,10 +68,12 @@ class MainWindow(QMainWindow):
         tab_name = self.tabs.tabText(index)
         from ui.theme import ERROR, TEXT_DIM, ACCENT, BG_DARK
         
-        if tab_name == "Race":
+        if tab_name == "Pilot":
             color = ERROR
         elif tab_name == "Convergence":
             color = TEXT_DIM
+        elif tab_name == "Endurance":
+            color = "#e0af68"  # Orange/Yellowish for Endurance
         else:
             color = ACCENT
             

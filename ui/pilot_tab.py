@@ -1,5 +1,5 @@
 """
-Race Tab: configure and view human pilot driving instructions.
+Pilot Tab: configure and view human pilot driving instructions.
 """
 
 from PyQt6.QtWidgets import (
@@ -17,7 +17,7 @@ from ui.theme import ACCENT, TEXT_DIM, ERROR, apply_mpl_theme
 from ui.plot_widget import PlotWidget
 
 
-class RaceTab(QWidget):
+class PilotTab(QWidget):
     """Left: Pilot constraints / Right: Telemetry and driving guide."""
 
     def __init__(self, app_state, parent=None):
