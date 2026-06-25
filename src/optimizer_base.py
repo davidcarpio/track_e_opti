@@ -10,7 +10,7 @@ here to avoid duplication.
 import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Union, Union
 
 from .vehicle_model import VehicleConfig, VehicleDynamics
 from .track_analysis import Track
@@ -34,6 +34,14 @@ class OptimizationConfig:
 
     # Stop parameters
     stop_distances: List[float] = field(default_factory=list)
+
+    # Lap boundary velocities (proto / no-stop category)
+    # v_start: pin v[0] to this value (e.g. 0.0 for Lap 1). None = free.
+    # v_end:   pin v[-1] to this value (e.g. 0.0 for Lap 7). None = free.
+    # periodic_lap: enforce v[0] == v[-1] (middle laps on a closed circuit).
+    v_start: Optional[float] = None
+    v_end: Optional[float] = None
+    periodic_lap: bool = False
 
     # Optimization parameters
     max_iterations: int = 2000
@@ -235,6 +243,23 @@ class BaseOptimizer(ABC):
         self.stop_indices: List[int] = []
         for stop_dist in self.config.stop_distances:
             self._apply_stop_constraint(stop_dist)
+
+        # Boundary pins: v_start / v_end
+        # Store so NLP and DP backends can apply exact bounds.
+        self.v_start_pinned: Optional[float] = self.config.v_start
+        self.v_end_pinned: Optional[float] = self.config.v_end
+        self.periodic_lap: bool = self.config.periodic_lap
+
+        n = len(self.distances)
+        if self.v_start_pinned is not None:
+            self.v_max[0] = self.v_start_pinned
+            if self.v_start_pinned == 0.0 and 0 not in self.stop_indices:
+                self.stop_indices.append(0)
+        if self.v_end_pinned is not None:
+            self.v_max[-1] = self.v_end_pinned
+            if self.v_end_pinned == 0.0 and (n - 1) not in self.stop_indices:
+                self.stop_indices.append(n - 1)
+
 
     def _motor_power_limited_speed(self, grade: float) -> float:
         """
